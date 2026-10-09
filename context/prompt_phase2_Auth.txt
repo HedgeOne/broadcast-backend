@@ -1,0 +1,1653 @@
+# Broadcast — Phase 2: Authentication & Identity + UI Foundation
+
+We have now completed the foundation work from Phase 0 and the database/Drizzle work from Phase 1.
+
+We are now starting:
+
+# Phase 2 — Authentication & Identity
+
+At the same time, this is the correct point to establish the **mobile application's visual design system and authentication UI**.
+
+---
+
+# IMPORTANT: SCOPE
+
+For this task, implement ONLY:
+
+1. Authentication & Identity backend
+2. Email verification using MSG91
+3. Session/token management
+4. User/device initialization required for authentication
+5. Authentication-related mobile UI
+6. Initial mobile design system/theme
+7. Authentication API integration
+8. Tests for authentication
+
+Do NOT implement the rest of the messaging application yet.
+
+Do NOT implement:
+
+- Direct chats
+- Groups
+- Broadcast Lists
+- Messages
+- Media
+- Voice messages
+- Push notifications
+- Presence
+- Typing indicators
+- E2EE
+- Offline sync
+- Message search
+- AWS infrastructure
+
+Those belong to later phases.
+
+---
+
+# 1. CURRENT PRODUCT
+
+We are building a production-grade mobile messaging application inspired by WhatsApp.
+
+The application supports:
+
+- 1-to-1 messaging
+- Groups
+- Broadcast Lists
+- Text
+- Images
+- Videos
+- Documents
+- Voice messages
+- Reactions
+- Replies
+- Forwarding
+- Editing
+- Deletion
+- Read receipts
+- Delivery receipts
+- Presence
+- Typing indicators
+- Offline-first synchronization
+- Multi-device usage
+- End-to-end encryption
+
+However, only authentication/identity is being implemented now.
+
+---
+
+# 2. AUTHENTICATION PROVIDER DECISION
+
+## Current authentication method
+
+For the initial version, users authenticate using:
+
+**Email + verification code**
+
+The verification code is sent using:
+
+**MSG91**
+
+This is the current production provider.
+
+Do NOT implement mobile-number OTP yet.
+
+---
+
+# 3. FUTURE AUTHENTICATION
+
+Later we will switch from:
+
+```text
+Email
+  ↓
+MSG91
+  ↓
+Verification code
+```
+
+to:
+
+```text
+Mobile number
+  ↓
+MSG91 / SMS provider
+  ↓
+OTP
+```
+
+Therefore, DO NOT tightly couple the authentication domain to email.
+
+The architecture must allow:
+
+```text
+Authentication
+      │
+      ▼
+Verification Provider Interface
+      │
+      ├── Email / MSG91
+      │
+      └── Mobile OTP / future provider
+```
+
+The rest of the application should not care which verification provider is being used.
+
+---
+
+# 4. AUTHENTICATION ARCHITECTURE
+
+Use a provider abstraction.
+
+Conceptually:
+
+```text
+Auth Service
+    │
+    ▼
+Verification Provider
+    │
+    └── MSG91 Provider
+```
+
+Later:
+
+```text
+Auth Service
+    │
+    ▼
+Verification Provider
+    │
+    ├── MSG91 Email
+    │
+    └── MSG91 Mobile OTP
+```
+
+Do NOT make the provider implementation responsible for:
+
+- users
+- sessions
+- JWTs
+- authorization
+- devices
+
+Those belong to the authentication/domain layer.
+
+The provider should only handle verification delivery.
+
+---
+
+# 5. AUTHENTICATION FLOW
+
+Implement the following initial flow.
+
+## Step 1 — Enter email
+
+User opens the application.
+
+They see:
+
+```text
+Welcome to Broadcast
+
+Enter your email to continue
+
+[ Email address ]
+
+[ Continue ]
+```
+
+User enters:
+
+```text
+sarthak@example.com
+```
+
+---
+
+## Step 2 — Request verification code
+
+Mobile calls:
+
+```http
+POST /auth/request-code
+```
+
+Payload:
+
+```json
+{
+  "email": "sarthak@example.com"
+}
+```
+
+Backend:
+
+```text
+validate email
+      ↓
+normalize email
+      ↓
+rate limit
+      ↓
+generate verification code
+      ↓
+hash code
+      ↓
+store verification challenge
+      ↓
+send through MSG91
+      ↓
+return success
+```
+
+Do NOT return the actual verification code to the client.
+
+---
+
+# 6. VERIFICATION CODE SECURITY
+
+Never store the plaintext verification code.
+
+Store a hash.
+
+For example:
+
+```text
+user enters:
+123456
+
+server stores:
+hash(123456)
+```
+
+When the user submits the code:
+
+```text
+123456
+    ↓
+hash
+    ↓
+compare
+```
+
+The verification challenge must have:
+
+- expiration
+- attempt limit
+- resend cooldown
+- rate limiting
+- consumed state
+
+Do not allow unlimited verification attempts.
+
+---
+
+# 7. VERIFY CODE
+
+Mobile calls:
+
+```http
+POST /auth/verify-code
+```
+
+Payload:
+
+```json
+{
+  "email": "sarthak@example.com",
+  "code": "123456"
+}
+```
+
+Backend:
+
+```text
+validate
+   ↓
+find active challenge
+   ↓
+check expiration
+   ↓
+check attempt limit
+   ↓
+verify hash
+   ↓
+consume challenge
+   ↓
+find/create user
+   ↓
+create device
+   ↓
+create session
+   ↓
+issue tokens
+```
+
+---
+
+# 8. USER CREATION
+
+If the email does not correspond to an existing user:
+
+Create a new user.
+
+The user's identity should NOT be based purely on the email field long-term.
+
+The `users` table already contains:
+
+```text
+id
+phone_number
+...
+```
+
+Because the database was originally designed with the eventual mobile OTP identity model in mind.
+
+Do not casually redesign the entire users table.
+
+Instead, inspect the existing schema and determine the cleanest way to support the current email authentication phase while retaining the future phone-authentication path.
+
+If a schema change is genuinely required, create a new migration.
+
+Do NOT rewrite Migration 001.
+
+---
+
+# 9. EMAIL IDENTITY
+
+Introduce a proper identity representation if required.
+
+Prefer a model where authentication identifiers can evolve.
+
+The architecture should eventually support:
+
+```text
+User
+ │
+ ├── Email identity
+ │
+ └── Phone identity
+```
+
+rather than hard-coding:
+
+```text
+User = Email
+```
+
+The future target is:
+
+```text
+user
+ ├── email
+ └── phone_number
+```
+
+with phone becoming the primary authentication mechanism later.
+
+Do not duplicate users when the same person later verifies a phone number.
+
+If this requires a database migration, explain the proposed design before implementing it.
+
+---
+
+# 10. VERIFICATION CHALLENGE
+
+The current database migration does not necessarily contain all authentication challenge state.
+
+Add an appropriate migration if necessary.
+
+A verification challenge should conceptually contain:
+
+```text
+id
+identifier
+identifier_type
+code_hash
+expires_at
+attempt_count
+max_attempts
+last_sent_at
+consumed_at
+created_at
+```
+
+Where:
+
+```text
+identifier_type
+=
+email
+```
+
+for the current implementation.
+
+Later:
+
+```text
+identifier_type
+=
+phone
+```
+
+can be added without redesigning the authentication system.
+
+Do not store plaintext OTPs/codes.
+
+---
+
+# 11. RATE LIMITING
+
+Implement multiple layers of rate limiting.
+
+At minimum:
+
+### Request-code
+
+Limit by:
+
+```text
+IP
+identifier
+```
+
+### Verify-code
+
+Limit by:
+
+```text
+IP
+identifier
+challenge
+```
+
+### Resend
+
+Apply a cooldown.
+
+Example conceptual behavior:
+
+```text
+request code
+    ↓
+wait
+    ↓
+resend available
+```
+
+Do not hard-code arbitrary production values without documenting them.
+
+Put authentication limits in configuration.
+
+---
+
+# 12. MSG91 INTEGRATION
+
+Create a dedicated MSG91 provider.
+
+Do NOT call MSG91 directly from route handlers.
+
+Use something conceptually like:
+
+```text
+src/modules/auth/
+├── auth.routes.ts
+├── auth.service.ts
+├── auth.repository.ts
+├── verification/
+│   ├── verification-provider.ts
+│   └── msg91-provider.ts
+└── schemas.ts
+```
+
+The interface should conceptually resemble:
+
+```ts
+interface VerificationProvider {
+  sendVerificationCode(input: {
+    destination: string;
+    code: string;
+    channel: "email" | "sms";
+  }): Promise<void>;
+}
+```
+
+The exact interface can be improved based on the existing codebase.
+
+The important requirement is that:
+
+**AuthService must not depend directly on MSG91.**
+
+---
+
+# 13. MSG91 CONFIGURATION
+
+All MSG91 configuration must come from environment variables.
+
+Never hard-code:
+
+- API keys
+- authentication tokens
+- template IDs
+- sender IDs
+- secrets
+
+Use the existing environment validation system.
+
+Add appropriate variables such as:
+
+```env
+MSG91_API_KEY=
+MSG91_EMAIL_TEMPLATE_ID=
+```
+
+Use names appropriate to the actual MSG91 API integration.
+
+Document them in:
+
+```text
+.env.example
+```
+
+Never commit actual secrets.
+
+---
+
+# 14. MSG91 API
+
+Before implementing the provider:
+
+Inspect the current MSG91 integration requirements/documentation available to the project.
+
+Use the official/current MSG91 API contract rather than inventing request formats.
+
+The provider should:
+
+- send the verification message
+- handle provider errors
+- normalize provider failures
+- avoid leaking provider internals to API clients
+- log safely
+
+Do not log:
+
+- API keys
+- verification codes
+- access tokens
+- email contents unnecessarily
+
+---
+
+# 15. DEVELOPMENT MODE
+
+For local development, we need a way to test authentication without depending on external MSG91 delivery every time.
+
+Create a development-safe mechanism.
+
+Possible approach:
+
+```env
+AUTH_VERIFICATION_MODE=mock
+```
+
+Development mode may log or expose the verification code through a controlled development-only mechanism.
+
+However:
+
+**Never expose this behavior in production.**
+
+Production must use MSG91.
+
+If using a development code/logging mechanism, make the environment boundary explicit.
+
+---
+
+# 16. JWT / SESSION ARCHITECTURE
+
+Authentication should result in:
+
+```text
+access token
++
+refresh token
+```
+
+The database already contains:
+
+```text
+sessions
+```
+
+and:
+
+```text
+devices
+```
+
+Use those entities.
+
+The model should be:
+
+```text
+User
+ │
+ ├── Device A
+ │     └── Session
+ │
+ ├── Device B
+ │     └── Session
+ │
+ └── Device C
+       └── Session
+```
+
+Do NOT assume one user has one session.
+
+---
+
+# 17. ACCESS TOKENS
+
+Access tokens should be short-lived.
+
+They should contain the minimum required claims.
+
+Do not put unnecessary personal information into JWTs.
+
+At minimum, the backend should be able to resolve:
+
+```text
+user_id
+device_id
+session identity
+```
+
+Use the existing Fastify JWT infrastructure.
+
+---
+
+# 18. REFRESH TOKENS
+
+Refresh tokens should:
+
+- be long-lived relative to access tokens
+- be stored hashed in PostgreSQL
+- be associated with a device/session
+- be revocable
+- support rotation
+- expire
+- not be stored plaintext in PostgreSQL
+
+Do not store raw refresh tokens in the database.
+
+---
+
+# 19. MOBILE TOKEN STORAGE
+
+On React Native/Expo:
+
+Do NOT store authentication tokens in ordinary AsyncStorage.
+
+Use:
+
+```text
+Expo SecureStore
+```
+
+for sensitive authentication credentials.
+
+The mobile authentication layer should eventually look conceptually like:
+
+```text
+Auth API
+   ↓
+Auth Store
+   ↓
+SecureStore
+   ↓
+Authenticated API client
+```
+
+---
+
+# 20. AUTHENTICATED API CLIENT
+
+Create a clean API client abstraction.
+
+It should eventually support:
+
+```text
+GET
+POST
+PATCH
+DELETE
+```
+
+and:
+
+- attach access token
+- detect 401
+- refresh token
+- retry request
+- logout when refresh fails
+
+Do not duplicate token handling in individual screens.
+
+---
+
+# 21. MOBILE AUTH STATE
+
+Create a central authentication state.
+
+Conceptually:
+
+```text
+UNKNOWN
+  ↓
+CHECKING
+  ↓
+AUTHENTICATED
+  OR
+UNAUTHENTICATED
+```
+
+During startup:
+
+```text
+App launch
+   ↓
+load secure credentials
+   ↓
+validate/refresh session
+   ↓
+authenticated?
+   ├── yes → main app
+   └── no  → auth flow
+```
+
+Do not implement chat screens yet.
+
+The authenticated destination can initially be a placeholder/home screen.
+
+---
+
+# 22. AUTHENTICATION UI
+
+Now establish the first real visual language for the application.
+
+We want a design inspired by the usability principles of WhatsApp, but NOT a pixel-for-pixel copy.
+
+---
+
+# 23. PRIMARY VISUAL DIRECTION
+
+Your proposed direction is correct.
+
+Use:
+
+### Main background
+
+White:
+
+```text
+#FFFFFF
+```
+
+### Primary text
+
+Near-black rather than harsh pure black where appropriate:
+
+```text
+#111111
+```
+
+### Secondary text
+
+Neutral gray:
+
+```text
+#667085
+```
+
+### Primary accent
+
+Use a restrained messaging-app green.
+
+Recommended starting point:
+
+```text
+#128C7E
+```
+
+or a slightly brighter modern green:
+
+```text
+#159A8C
+```
+
+Choose ONE primary accent and establish it as a design token.
+
+Do not use many competing accent colors.
+
+### Light accent surface
+
+Use a very light green for selected/positive surfaces:
+
+```text
+#E8F5F2
+```
+
+### Light gray surface
+
+```text
+#F5F6F7
+```
+
+### Borders/dividers
+
+```text
+#E5E7EB
+```
+
+### Error
+
+Use a restrained red:
+
+```text
+#D92D20
+```
+
+### Success
+
+Use the primary green family.
+
+---
+
+# 24. DESIGN PHILOSOPHY
+
+The UI should feel:
+
+- clean
+- friendly
+- lightweight
+- modern
+- calm
+- trustworthy
+- approachable
+- fast
+- communication-focused
+
+Avoid:
+
+- excessive gradients
+- dark backgrounds by default
+- excessive shadows
+- neon colors
+- excessive rounded cards
+- overly decorative UI
+- dense enterprise-dashboard styling
+
+This is a messaging application.
+
+The UI should feel conversational.
+
+---
+
+# 25. DESIGN SYSTEM
+
+Do not hard-code colors throughout components.
+
+Create centralized design tokens.
+
+Conceptually:
+
+```text
+src/theme/
+├── colors.ts
+├── spacing.ts
+├── typography.ts
+├── radii.ts
+├── shadows.ts
+└── index.ts
+```
+
+The exact structure can differ if the project already has a theme system.
+
+---
+
+# 26. COLORS
+
+Create semantic tokens, not only raw colors.
+
+For example:
+
+```ts
+colors.background
+colors.surface
+colors.surfaceSecondary
+
+colors.textPrimary
+colors.textSecondary
+colors.textTertiary
+
+colors.primary
+colors.primaryPressed
+colors.primarySoft
+
+colors.border
+
+colors.success
+colors.error
+colors.warning
+```
+
+Components should consume semantic tokens.
+
+Avoid:
+
+```tsx
+color="#128C7E"
+```
+
+throughout the application.
+
+Prefer:
+
+```tsx
+color={colors.primary}
+```
+
+---
+
+# 27. TYPOGRAPHY
+
+Use the platform's native system font initially.
+
+Prioritize:
+
+- readability
+- clear hierarchy
+- comfortable line height
+- good accessibility
+
+Define typography tokens for:
+
+```text
+display
+heading
+title
+body
+bodySmall
+caption
+button
+label
+```
+
+Do not introduce a custom font yet unless there is a strong reason.
+
+---
+
+# 28. SPACING
+
+Use a consistent spacing scale.
+
+For example:
+
+```text
+4
+8
+12
+16
+20
+24
+32
+40
+48
+```
+
+Avoid arbitrary spacing values throughout components.
+
+---
+
+# 29. BORDER RADIUS
+
+Use moderate rounding.
+
+For example:
+
+```text
+small
+medium
+large
+pill
+```
+
+Buttons and inputs can have comfortable rounded corners.
+
+Do not make every component excessively pill-shaped.
+
+---
+
+# 30. AUTH SCREEN DESIGN
+
+The initial authentication experience should feel very simple.
+
+Suggested structure:
+
+```text
+┌─────────────────────────────┐
+│                             │
+│                             │
+│          [Logo]             │
+│                             │
+│     Welcome to Broadcast    │
+│                             │
+│  Message privately with     │
+│  friends, family and teams. │
+│                             │
+│  Email                      │
+│  ┌───────────────────────┐  │
+│  │ you@example.com       │  │
+│  └───────────────────────┘  │
+│                             │
+│  [       Continue       ]   │
+│                             │
+│                             │
+│  By continuing, you agree   │
+│  to our Terms & Privacy.   │
+│                             │
+└─────────────────────────────┘
+```
+
+Keep it spacious.
+
+The primary action should use the accent green.
+
+---
+
+# 31. VERIFICATION SCREEN
+
+After requesting the code:
+
+```text
+Verify your email
+
+We sent a verification code to
+
+you@example.com
+
+[ _ ][ _ ][ _ ][ _ ][ _ ][ _ ]
+
+Didn't receive it?
+
+Resend code
+
+Change email
+```
+
+Important states:
+
+- loading
+- invalid code
+- expired code
+- too many attempts
+- resend cooldown
+- network error
+- provider error
+
+The UI must not expose backend implementation details.
+
+---
+
+# 32. BUTTONS
+
+Primary button:
+
+- Green background
+- White text
+- High contrast
+- Clear pressed state
+- Disabled state
+- Loading state
+
+Secondary actions:
+
+- White/transparent background
+- Dark text
+- Optional light gray or green surface
+
+Do not create dozens of button variants.
+
+Start with:
+
+```text
+PrimaryButton
+SecondaryButton
+TextButton
+```
+
+---
+
+# 33. INPUTS
+
+Create a reusable input component.
+
+States:
+
+```text
+default
+focused
+filled
+error
+disabled
+```
+
+Use:
+
+- white background
+- subtle border
+- green focus state
+- clear error state
+
+Inputs should support accessibility labels.
+
+---
+
+# 34. LOADING STATES
+
+Avoid blocking the entire application unnecessarily.
+
+For authentication:
+
+```text
+Continue
+   ↓
+button shows spinner
+   ↓
+request
+```
+
+Disable duplicate submission.
+
+---
+
+# 35. ACCESSIBILITY
+
+Authentication UI must support:
+
+- screen readers
+- accessible labels
+- sufficient color contrast
+- reasonable touch targets
+- keyboard handling
+- Dynamic Type / font scaling where possible
+
+Do not use color as the only indication of an error.
+
+---
+
+# 36. RESPONSIVE MOBILE LAYOUT
+
+The application is mobile-first.
+
+Authentication screens should work on:
+
+- small phones
+- large phones
+- different aspect ratios
+- keyboard-open state
+
+Use safe areas.
+
+Avoid fixed absolute positioning for primary UI.
+
+---
+
+# 37. LOGO / BRANDING
+
+Do not invent a complex logo unless one already exists.
+
+For now, use a clean placeholder/logo treatment.
+
+The product name is:
+
+```text
+Broadcast
+```
+
+Do not use the WhatsApp logo or WhatsApp branding.
+
+We are only taking inspiration from WhatsApp's usability and visual simplicity.
+
+---
+
+# 38. API STRUCTURE
+
+Keep authentication routes modular.
+
+Conceptually:
+
+```text
+src/modules/auth/
+├── auth.routes.ts
+├── auth.service.ts
+├── auth.repository.ts
+├── auth.schemas.ts
+├── auth.types.ts
+├── verification/
+│   ├── verification-provider.ts
+│   ├── msg91-provider.ts
+│   └── mock-provider.ts
+└── index.ts
+```
+
+Do not put everything into `server.ts`.
+
+---
+
+# 39. AUTH API
+
+Implement approximately:
+
+```text
+POST /auth/request-code
+POST /auth/verify-code
+POST /auth/refresh
+POST /auth/logout
+POST /auth/logout-all
+GET  /auth/me
+```
+
+The exact API naming can be adjusted if there is already an established convention.
+
+---
+
+# 40. `/auth/me`
+
+This endpoint should return the authenticated user's basic identity.
+
+For example:
+
+```json
+{
+  "user": {
+    "id": "...",
+    "email": "...",
+    "displayName": "...",
+    "username": "..."
+  },
+  "device": {
+    "id": "..."
+  }
+}
+```
+
+Do not return sensitive internal information.
+
+---
+
+# 41. DEVICE CREATION
+
+After successful verification:
+
+```text
+verify identity
+      ↓
+find/create user
+      ↓
+register current device
+      ↓
+create session
+      ↓
+issue tokens
+```
+
+The mobile client should provide reasonable device metadata:
+
+```text
+platform
+device name
+app version
+OS version
+```
+
+Do not trust device metadata for security decisions.
+
+---
+
+# 42. DATABASE CHANGES
+
+Before changing the database:
+
+Inspect Migration 001 and the current Drizzle schema.
+
+If email identity is not properly represented, create a new migration:
+
+```text
+002_authentication.sql
+```
+
+Do NOT edit:
+
+```text
+001_initial.sql
+```
+
+after it has been established.
+
+Potential additions may include:
+
+```text
+email identity
+verification challenges
+authentication metadata
+```
+
+But choose the cleanest normalized design based on the existing schema.
+
+Do not duplicate identity unnecessarily.
+
+---
+
+# 43. TESTING
+
+Authentication must have automated tests.
+
+At minimum test:
+
+### Request code
+
+- valid email
+- malformed email
+- rate limit
+- resend cooldown
+- provider failure
+
+### Verify
+
+- correct code
+- incorrect code
+- expired code
+- too many attempts
+- already-used code
+- nonexistent challenge
+
+### User creation
+
+- first authentication creates user
+- repeated authentication finds existing user
+
+### Sessions
+
+- session created
+- access token works
+- refresh works
+- refresh rotation
+- revoked refresh token fails
+- logout revokes session
+
+### Device
+
+- first device created
+- second device creates separate device/session
+
+### Authorization
+
+- unauthenticated `/auth/me` fails
+- authenticated `/auth/me` succeeds
+
+---
+
+# 44. Security Requirements
+
+Do not compromise security for development convenience.
+
+Never log:
+
+```text
+verification code
+password
+refresh token
+JWT secret
+MSG91 API key
+```
+
+Verification codes must be:
+
+- hashed
+- short-lived
+- single-use
+- attempt-limited
+
+Refresh tokens must be hashed in PostgreSQL.
+
+Access tokens should be short-lived.
+
+Authentication endpoints must be rate limited.
+
+---
+
+# 45. Acceptance Criteria
+
+At the end of this task:
+
+## Backend
+
+These should work:
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+Tests should pass.
+
+The backend should start normally.
+
+Health check should remain functional.
+
+---
+
+## Authentication
+
+A new user should be able to:
+
+```text
+Open app
+ ↓
+Enter email
+ ↓
+Request verification code
+ ↓
+Receive code through MSG91/mock provider
+ ↓
+Enter code
+ ↓
+Verify
+ ↓
+User created
+ ↓
+Device created
+ ↓
+Session created
+ ↓
+Authenticated
+```
+
+An existing user should:
+
+```text
+Enter email
+ ↓
+Verify
+ ↓
+Existing user loaded
+ ↓
+New device/session created if appropriate
+```
+
+---
+
+# 46. Mobile Acceptance Criteria
+
+The app should have:
+
+```text
+Authentication flow
+    ↓
+Email screen
+    ↓
+Verification screen
+    ↓
+Authenticated placeholder/home screen
+```
+
+The UI should use the new centralized theme.
+
+No hard-coded colors scattered through authentication components.
+
+The visual language should be consistent across the authentication flow.
+
+---
+
+# 47. Final Verification
+
+Run the actual commands.
+
+At minimum:
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm test
+```
+
+Verify:
+
+```text
+PostgreSQL
+Redis
+Backend
+Authentication API
+Mobile authentication flow
+```
+
+Do not claim a test passed unless it actually passed.
+
+---
+
+# 48. Final Report
+
+When complete, provide:
+
+## Completed
+
+Exact features implemented.
+
+## Backend files
+
+Important files created/modified.
+
+## Frontend files
+
+Important files created/modified.
+
+## Database
+
+Any migrations created and why.
+
+## MSG91
+
+Explain:
+
+- provider implementation
+- environment variables
+- development/mock behavior
+- production behavior
+
+Do not reveal secrets.
+
+## Authentication flow
+
+Briefly explain the final flow.
+
+## UI system
+
+Document:
+
+- primary colors
+- semantic color tokens
+- typography
+- spacing
+- component conventions
+
+## Tests
+
+Report actual:
+
+```text
+typecheck
+lint
+build
+test
+```
+
+results.
+
+## Known issues
+
+Anything that remains.
+
+## Next task
+
+Recommend:
+
+```text
+Phase 3 — Users + Devices + Sessions
+```
+
+Do NOT automatically begin Phase 3.
+
+---
+
+# 49. MOST IMPORTANT ENGINEERING PRINCIPLES
+
+This is a production messaging application.
+
+Prefer:
+
+```text
+Route
+  ↓
+Validation
+  ↓
+Service
+  ↓
+Repository
+  ↓
+Database
+```
+
+Keep provider integrations behind interfaces.
+
+Keep authentication independent of the current verification provider.
+
+Keep email authentication replaceable with mobile OTP.
+
+Keep the UI theme centralized.
+
+Keep secrets out of source control.
+
+Keep authentication state centralized.
+
+Do not introduce unnecessary abstractions.
+
+Do not redesign existing architecture without a concrete reason.
+
+Do not modify Migration 001 unnecessarily.
+
+Do not implement later phases.
+
+Implement **Phase 2 Authentication & Identity + the initial mobile UI/design foundation only**.

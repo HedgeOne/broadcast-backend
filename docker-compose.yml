@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: broadcast-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: broadcast
+      POSTGRES_PASSWORD: broadcast_dev_password
+      POSTGRES_DB: broadcast
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - broadcast_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U broadcast -d broadcast"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    networks:
+      - broadcast-network
+
+  redis:
+    image: redis:8
+    container_name: broadcast-redis
+    restart: unless-stopped
+
+    command: redis-server --appendonly yes
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - broadcast_redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    networks:
+      - broadcast-network
+
+volumes:
+  broadcast_postgres_data:
+    name: broadcast-postgres-data
+
+  broadcast_redis_data:
+    name: broadcast-redis-data
+
+networks:
+  broadcast-network:
+    name: broadcast-network

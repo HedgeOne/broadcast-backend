@@ -1,0 +1,2 @@
+ALTER TABLE "users" ADD COLUMN "date_of_birth" date;--> statement-breakpoint
+ALTER TABLE "users" ADD CONSTRAINT "users_date_of_birth_range_check" CHECK ("users"."date_of_birth" IS NULL OR "users"."date_of_birth" >= DATE '1900-01-01');

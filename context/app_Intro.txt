@@ -1,0 +1,1594 @@
+# Broadcast — Project Context, Architecture & Current State
+
+## IMPORTANT: NO ACTION YET
+
+This document is a project-context and architecture briefing.
+
+**Do not implement anything yet.**
+**Do not modify any files.**
+**Do not install dependencies.**
+**Do not create or modify database migrations.**
+**Do not run database migrations.**
+**Do not generate application code.**
+**Do not refactor the existing codebase.**
+
+For now, understand the project, architecture, constraints, and current implementation state. Wait for explicit instructions before taking any implementation action.
+
+---
+
+# 1. What We Are Building
+
+We are building a production-grade mobile messaging application inspired by WhatsApp.
+
+The application is a modern, realtime, offline-first messaging platform.
+
+The goal is NOT to build a toy WhatsApp clone. The architecture should be designed from the beginning to support:
+
+- Large numbers of users
+- Multiple devices per user
+- Offline usage
+- Reliable message delivery
+- Realtime messaging
+- End-to-end encryption
+- Groups
+- Broadcast Lists
+- Media
+- Push notifications
+- Message synchronization
+- Message ordering
+- Idempotent retries
+- Future horizontal scaling
+- AWS production deployment
+
+We are deliberately excluding some WhatsApp features.
+
+## Included
+
+### Messaging
+
+- 1-to-1 conversations
+- Group conversations
+- Broadcast Lists
+- Text messages
+- Emojis
+- GIFs
+- Stickers
+- Images
+- Videos
+- Documents
+- Voice messages
+- Replies
+- Forwarding
+- Reactions
+- Editing
+- Message deletion
+- Starred messages
+- Pinned messages
+- Mentions
+- Link previews
+- Delivery receipts
+- Read receipts
+- Typing indicators
+- Online status
+- Last seen
+- Unread counts
+
+### Groups
+
+- Create groups
+- Group admins
+- Group ownership
+- Add/remove members
+- Invite links
+- Group name
+- Group description
+- Group image
+- Admin-only messaging
+- Group permissions
+- Ownership transfer
+
+### Broadcast Lists
+
+Broadcast Lists are a first-class messaging primitive.
+
+A Broadcast List is NOT a group.
+
+For example:
+
+Alice creates:
+
+```text
+"Customers"
+
+Recipients:
+- Bob
+- Charlie
+- David
+```
+
+Alice sends one broadcast message.
+
+Bob, Charlie and David should each receive the message in their normal 1-to-1 conversation with Alice.
+
+They must NOT see each other as recipients.
+
+The sender sees the Broadcast List as an organizational object.
+
+The backend stores the logical broadcast message once and stores recipient-specific delivery/read state separately.
+
+### Privacy / Account
+
+- Phone number authentication
+- OTP authentication
+- Profile
+- Privacy settings
+- Blocking
+- Reporting
+- Disappearing messages
+- Linked devices
+- Security settings
+- Account deletion
+
+### Media
+
+- Camera
+- Gallery
+- Images
+- Videos
+- Documents
+- Voice messages
+- Compression
+- Thumbnails
+- S3 storage
+- CDN delivery
+
+---
+
+# 2. Explicitly Out of Scope
+
+Do NOT implement these unless explicitly requested later:
+
+- Audio calls
+- Video calls
+- Status / Stories
+- Location sharing
+
+This is important.
+
+The application is a messaging platform, not a complete WhatsApp feature clone.
+
+---
+
+# 3. Repository Structure
+
+We intentionally use two repositories.
+
+## Mobile frontend
+
+```text
+~/Desktop/broadcast
+```
+
+Repository:
+
+```text
+broadcast
+```
+
+This contains the React Native / Expo mobile application.
+
+## Backend
+
+```text
+~/Desktop/broadcast/broadcast-backend
+```
+
+Repository:
+
+```text
+broadcast-backend
+```
+
+This contains the backend modular monolith.
+
+Do not combine these repositories.
+
+---
+
+# 4. High-Level Architecture
+
+The architecture is:
+
+```text
+┌─────────────────────────────┐
+│       React Native App      │
+│          Expo               │
+│                             │
+│  UI                         │
+│  Zustand                    │
+│  TanStack Query             │
+│  SQLite                     │
+│  SecureStore                │
+│  WebSocket                  │
+└──────────────┬──────────────┘
+               │
+               │ HTTPS
+               │ WebSocket
+               ▼
+┌─────────────────────────────┐
+│       Backend API           │
+│                             │
+│ Node.js + TypeScript        │
+│ Fastify                     │
+│ Modular Monolith            │
+│                             │
+│ Auth                        │
+│ Users                       │
+│ Devices                     │
+│ Chats                       │
+│ Groups                      │
+│ Broadcasts                  │
+│ Messages                    │
+│ Media                       │
+│ Notifications               │
+│ Presence                    │
+│ Privacy                     │
+└──────────┬──────────┬───────┘
+           │          │
+           ▼          ▼
+     PostgreSQL      Redis
+      durable       ephemeral
+       state          state
+
+           │
+           ▼
+          S3
+       media storage
+
+           │
+           ▼
+      CloudFront
+          CDN
+```
+
+---
+
+# 5. Technology Stack
+
+## Mobile
+
+Use:
+
+- React Native
+- Expo
+- TypeScript
+- Expo Router
+- Zustand
+- TanStack Query
+- Expo SQLite
+- Expo SecureStore
+- WebSocket
+- Expo Notifications
+- Expo Camera
+- Expo Image Picker
+- appropriate Expo/native modules as required
+
+The mobile application should be offline-first.
+
+---
+
+# 6. Backend
+
+Use:
+
+- Node.js 24
+- TypeScript
+- Fastify
+- WebSockets
+- Zod
+- PostgreSQL
+- Redis
+- Drizzle ORM
+- AWS S3
+- AWS CloudFront
+- FCM/APNs for push notifications
+
+The backend is currently a modular monolith.
+
+Do NOT split this into microservices prematurely.
+
+The backend should be internally modular:
+
+```text
+src/
+  config/
+  db/
+  redis/
+  middleware/
+  realtime/
+  workers/
+
+  modules/
+    auth/
+    users/
+    devices/
+    chats/
+    groups/
+    broadcasts/
+    messages/
+    media/
+    notifications/
+    presence/
+    privacy/
+```
+
+This allows us to scale the application without introducing unnecessary distributed-system complexity too early.
+
+---
+
+# 7. Database
+
+PostgreSQL is the authoritative durable datastore.
+
+PostgreSQL stores:
+
+- Users
+- Devices
+- Sessions
+- Chats
+- Chat members
+- Groups
+- Group members
+- Messages
+- Attachments
+- Reactions
+- Stars
+- Pins
+- Broadcast Lists
+- Broadcast recipients
+- Privacy settings
+- User settings
+- Block relationships
+- E2EE key metadata
+- Message synchronization state
+
+PostgreSQL is the source of truth for durable application state.
+
+---
+
+# 8. Redis
+
+Redis is NOT the source of truth for messages.
+
+Redis is used for ephemeral/distributed state such as:
+
+- Online presence
+- Presence TTLs
+- Typing indicators
+- WebSocket routing
+- Connection state
+- Rate limiting
+- Caching
+- Distributed coordination
+- Queues / streams where appropriate
+- Temporary realtime state
+
+If Redis goes down, durable messages must remain safe in PostgreSQL.
+
+---
+
+# 9. Mobile SQLite
+
+SQLite is used on the device for:
+
+- Local chats
+- Local messages
+- Cached users
+- Cached conversation state
+- Pending outbound messages
+- Offline queue
+- Local search indexes
+- Local decrypted message data where appropriate
+
+The mobile app should be designed around an offline-first model.
+
+The user should be able to open the application and see previously synchronized conversations even without an internet connection.
+
+---
+
+# 10. REST + WebSocket
+
+We use both REST and WebSocket.
+
+## REST
+
+Use REST for durable operations such as:
+
+- Authentication
+- User profile
+- Chat creation
+- Group management
+- Broadcast List management
+- Message history
+- Message synchronization
+- Media upload preparation
+- Settings
+- Privacy
+- Device management
+
+## WebSocket
+
+Use WebSocket for realtime events:
+
+- New messages
+- Delivery updates
+- Read updates
+- Typing indicators
+- Presence
+- Reactions
+- Message edits
+- Message deletion
+- Group events
+- Broadcast delivery events
+
+WebSocket is NOT the durable source of truth.
+
+---
+
+# 11. Message Reliability
+
+Message delivery must be designed for unreliable networks.
+
+Every outbound message has a client-generated ID:
+
+```text
+client_message_id
+```
+
+The server generates its own:
+
+```text
+message.id
+```
+
+If the mobile client sends the same message again because of a timeout/reconnect, the backend must recognize the same client ID and avoid creating a duplicate.
+
+This is critical.
+
+Example:
+
+```text
+Client:
+
+client_message_id = abc-123
+
+        │
+        ▼
+
+POST /messages
+
+        │
+        ▼
+
+Server creates message
+id = server-generated UUID
+
+        │
+        X
+Connection lost
+
+        │
+        ▼
+
+Client retries abc-123
+
+        │
+        ▼
+
+Server recognizes abc-123
+and returns the existing message
+```
+
+No duplicate message should be created.
+
+---
+
+# 12. Message Ordering
+
+Do NOT use timestamps as the authoritative ordering mechanism.
+
+Every chat has a monotonically increasing:
+
+```text
+sequence
+```
+
+Example:
+
+```text
+chat_id = X
+
+sequence 1001
+sequence 1002
+sequence 1003
+sequence 1004
+```
+
+This allows reliable synchronization.
+
+Example:
+
+```text
+Client currently has sequence 1001.
+
+Server has:
+
+1001
+1002
+1003
+1004
+1005
+...
+1057
+```
+
+The client can request:
+
+```text
+1002 → 1057
+```
+
+This is much more reliable than asking for messages based purely on timestamps.
+
+---
+
+# 13. Read and Delivery Receipts
+
+Do not create one database row for every normal message receipt.
+
+For normal chats, use:
+
+```text
+chat_members.last_delivered_sequence
+chat_members.last_read_sequence
+```
+
+For example:
+
+```text
+last_delivered_sequence = 1057
+last_read_sequence = 1054
+```
+
+This means the member has received through 1057 and read through 1054.
+
+This dramatically reduces database write volume.
+
+Broadcast Lists are different.
+
+Broadcast messages require recipient-specific state:
+
+```text
+broadcast_message_recipients
+```
+
+because Bob may have read the message while Charlie has not.
+
+---
+
+# 14. End-to-End Encryption
+
+The architecture must eventually support Signal Protocol-style E2EE.
+
+Do NOT implement cryptographic primitives manually.
+
+The system should use a mature, audited cryptographic implementation/library.
+
+Conceptually:
+
+```text
+User
+  │
+  ├── Device A
+  │     ├── Identity Key
+  │     ├── Signed Pre-Key
+  │     └── One-Time Pre-Keys
+  │
+  └── Device B
+        ├── Identity Key
+        ├── Signed Pre-Key
+        └── One-Time Pre-Keys
+```
+
+The server should primarily see ciphertext.
+
+The database therefore contains fields such as:
+
+```text
+ciphertext
+encrypted_metadata
+identity_key_public
+signed_prekey_public
+one_time_prekeys
+```
+
+The actual E2EE implementation is NOT being built yet.
+
+Do not invent a custom cryptographic protocol.
+
+---
+
+# 15. Multi-Device Architecture
+
+Multi-device support is a first-class requirement.
+
+A user is not equivalent to a device.
+
+Conceptually:
+
+```text
+User
+ ├── Device A
+ ├── Device B
+ └── Device C
+```
+
+Each device can have:
+
+- Its own session
+- Its own cryptographic identity
+- Its own push token
+- Its own WebSocket connection
+
+The backend must therefore never assume:
+
+```text
+one user = one device
+```
+
+---
+
+# 16. Media Architecture
+
+Do NOT upload large media files through the Node.js backend.
+
+Instead:
+
+```text
+Mobile
+   │
+   │ request upload URL
+   ▼
+Backend
+   │
+   │ presigned URL
+   ▼
+S3
+```
+
+Then:
+
+```text
+Mobile
+   │
+   ▼
+S3
+```
+
+The backend stores only media metadata.
+
+Production delivery:
+
+```text
+S3
+ │
+ ▼
+CloudFront
+ │
+ ▼
+Mobile
+```
+
+Media should eventually support:
+
+- Original file
+- Thumbnail
+- MIME type
+- Size
+- Dimensions
+- Duration
+- Encryption metadata
+
+---
+
+# 17. Current Local Development Infrastructure
+
+Local development uses Docker.
+
+Currently:
+
+```text
+PostgreSQL 17
+Redis 8
+```
+
+Docker containers:
+
+```text
+broadcast-postgres
+broadcast-redis
+```
+
+PostgreSQL:
+
+```text
+Host: localhost
+Port: 5433
+Database: broadcast
+User: broadcast
+```
+
+Redis:
+
+```text
+Host: localhost
+Port: 6379
+```
+
+The backend is currently running directly on the host machine.
+
+Therefore the backend uses:
+
+```env
+DATABASE_URL=postgresql://broadcast:broadcast_dev_password@localhost:5433/broadcast
+REDIS_URL=redis://localhost:6379
+```
+
+Inside Docker, services would communicate using:
+
+```text
+postgres:5432
+redis:6379
+```
+
+Do not connect local development to production databases.
+
+---
+
+# 18. Production Architecture
+
+Production will eventually run on AWS.
+
+Preferred architecture:
+
+```text
+                    ┌───────────────┐
+                    │ CloudFront    │
+                    └───────┬───────┘
+                            │
+                            ▼
+                         S3 Media
+
+
+Mobile
+  │
+  ▼
+ALB
+  │
+  ▼
+ECS Fargate
+  │
+  ├───────────────┐
+  │               │
+  ▼               ▼
+RDS PostgreSQL   ElastiCache
+                   Redis
+
+
+Workers
+  │
+  ▼
+SQS
+```
+
+Potential production components:
+
+- ECS Fargate
+- Application Load Balancer
+- RDS PostgreSQL
+- ElastiCache Redis/Valkey
+- S3
+- CloudFront
+- SQS
+- FCM/APNs
+- CloudWatch
+- Terraform
+
+Do NOT build the production AWS infrastructure yet.
+
+We are currently focused on local development.
+
+---
+
+# 19. Database Migration 001
+
+The initial PostgreSQL migration has already been designed.
+
+File:
+
+```text
+migrations/001_initial.sql
+```
+
+It creates the foundation for:
+
+### Identity
+
+```text
+users
+devices
+sessions
+device_keys
+one_time_prekeys
+```
+
+### Conversations
+
+```text
+chats
+chat_members
+groups
+group_members
+```
+
+### Messaging
+
+```text
+messages
+message_attachments
+message_reactions
+starred_messages
+pinned_messages
+```
+
+### Broadcast
+
+```text
+broadcast_lists
+broadcast_list_members
+broadcast_messages
+broadcast_message_recipients
+```
+
+### Privacy/settings
+
+```text
+blocked_users
+privacy_settings
+user_settings
+user_contacts
+```
+
+### Migration tracking
+
+```text
+schema_migrations
+```
+
+The database also contains:
+
+```text
+set_updated_at()
+```
+
+for automatically maintaining `updated_at` fields.
+
+New users automatically receive:
+
+```text
+privacy_settings
+user_settings
+```
+
+---
+
+# 20. Important Database Decisions
+
+These decisions are already made.
+
+## PostgreSQL is authoritative
+
+Do not duplicate authoritative business state into Redis.
+
+## UUID primary keys
+
+Tables use UUID primary keys.
+
+Application-level UUIDv7 generation can be introduced later for time-sortable identifiers.
+
+The PostgreSQL schema currently uses:
+
+```sql
+gen_random_uuid()
+```
+
+for safe database-side UUID generation.
+
+## Message sequence
+
+Messages use:
+
+```text
+chat_id + sequence
+```
+
+for deterministic ordering.
+
+## Client idempotency
+
+Messages use:
+
+```text
+client_message_id
+```
+
+to prevent duplicate messages during retries.
+
+## Broadcasts
+
+Broadcast Lists are separate from groups.
+
+## Read state
+
+Normal chats use:
+
+```text
+last_delivered_sequence
+last_read_sequence
+```
+
+Broadcasts use recipient-specific state.
+
+## E2EE
+
+Message bodies are modeled as opaque ciphertext.
+
+## Multi-device
+
+Devices are separate entities from users.
+
+---
+
+# 21. Current Backend Repository State
+
+The backend has already been initialized.
+
+Current structure:
+
+```text
+broadcast-backend/
+│
+├── src/
+│   ├── config/
+│   ├── db/
+│   ├── redis/
+│   ├── middleware/
+│   ├── realtime/
+│   ├── workers/
+│   │
+│   └── modules/
+│       ├── auth/
+│       ├── users/
+│       ├── devices/
+│       ├── chats/
+│       ├── groups/
+│       ├── broadcasts/
+│       ├── messages/
+│       ├── media/
+│       ├── notifications/
+│       ├── presence/
+│       └── privacy/
+│
+├── migrations/
+├── tests/
+├── package.json
+├── tsconfig.json
+├── docker-compose.yml
+├── .env
+└── .env.example
+```
+
+---
+
+# 22. Backend Dependencies Already Installed
+
+The backend currently uses:
+
+```text
+fastify
+@fastify/cors
+@fastify/helmet
+@fastify/rate-limit
+@fastify/jwt
+@fastify/websocket
+pg
+ioredis
+zod
+dotenv
+```
+
+Development dependencies include:
+
+```text
+typescript
+tsx
+@types/node
+eslint
+prettier
+```
+
+The backend uses:
+
+```text
+Node.js 24
+TypeScript
+ESM
+```
+
+---
+
+# 23. Backend Health Endpoint
+
+A health endpoint already exists:
+
+```text
+GET /health
+```
+
+It checks:
+
+```text
+PostgreSQL
+Redis
+```
+
+If both are healthy:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+If a dependency is unavailable, the server reports a degraded state.
+
+The application already handles Redis connection lifecycle and avoids treating Redis as a durable dependency for persisted data.
+
+---
+
+# 24. WebSocket Foundation
+
+A basic WebSocket endpoint also exists:
+
+```text
+/ws
+```
+
+The purpose at this stage is only to establish the realtime infrastructure.
+
+It is NOT yet the production messaging protocol.
+
+The future WebSocket layer should handle:
+
+```text
+authentication
+connection registration
+presence
+message events
+delivery events
+read events
+typing events
+reactions
+edits
+deletions
+group events
+broadcast events
+reconnection
+```
+
+---
+
+# 25. Frontend Current State
+
+The Expo application has already been initialized in:
+
+```text
+~/Desktop/broadcast
+```
+
+Current technology:
+
+```text
+Expo
+React Native
+TypeScript
+Expo Router
+```
+
+Expo version currently initialized around:
+
+```text
+Expo 57
+React Native 0.86
+```
+
+The project has already resolved initial Expo dependency issues.
+
+When adding native Expo/React Native packages in the future, prefer:
+
+```bash
+npx expo install <package>
+```
+
+rather than blindly using:
+
+```bash
+pnpm add <package>
+```
+
+for Expo-managed native dependencies.
+
+For pure JavaScript packages, `pnpm add` is appropriate.
+
+---
+
+# 26. Frontend Architecture We Will Build
+
+The mobile application should eventually have something conceptually like:
+
+```text
+app/
+  (auth)/
+  (tabs)/
+  chat/
+  group/
+  broadcast/
+  settings/
+
+src/
+  api/
+  components/
+  db/
+  hooks/
+  lib/
+  navigation/
+  realtime/
+  store/
+  sync/
+  types/
+  crypto/
+  media/
+```
+
+This is a conceptual target, not an instruction to create it yet.
+
+---
+
+# 27. Offline-First Design
+
+The mobile application should behave as:
+
+```text
+UI
+ ↓
+Local SQLite
+ ↓
+Sync Engine
+ ↓
+REST/WebSocket
+ ↓
+Backend
+```
+
+Not:
+
+```text
+UI
+ ↓
+Network
+ ↓
+Backend
+```
+
+The local database should be able to provide the UI with existing data immediately.
+
+Outbound messages should enter a local pending queue.
+
+Example:
+
+```text
+User sends message
+       │
+       ▼
+SQLite pending message
+       │
+       ▼
+Optimistic UI
+       │
+       ▼
+Network available?
+   ┌───┴────┐
+   │        │
+  yes       no
+   │        │
+   ▼        ▼
+server    wait
+   │
+   ▼
+acknowledgement
+   │
+   ▼
+mark sent
+```
+
+---
+
+# 28. Reconnection
+
+The client should eventually implement an explicit connection state machine:
+
+```text
+DISCONNECTED
+      ↓
+RECONNECTING
+      ↓
+AUTHENTICATING
+      ↓
+SYNCING
+      ↓
+CONNECTED
+```
+
+After reconnecting, the client must synchronize from its last known server sequence rather than assuming it received every WebSocket event.
+
+WebSocket events are realtime acceleration, not guaranteed durable delivery.
+
+---
+
+# 29. Coding Principles
+
+When implementation begins:
+
+### TypeScript
+
+Use strict TypeScript.
+
+Avoid:
+
+```ts
+any
+```
+
+unless there is a genuinely justified boundary.
+
+### Validation
+
+Use Zod at API boundaries.
+
+### Database
+
+Use transactions for operations that modify multiple related records.
+
+### Idempotency
+
+Every retryable write should have an idempotency strategy.
+
+### Authorization
+
+Never rely on the frontend for authorization.
+
+Every backend operation must verify:
+
+- authenticated user
+- ownership
+- membership
+- permissions
+- resource access
+
+### Security
+
+Never trust client-provided:
+
+- user IDs
+- chat membership
+- group roles
+- message ownership
+- broadcast ownership
+- authorization state
+
+### Errors
+
+Use structured application errors.
+
+Do not leak:
+
+- database internals
+- stack traces
+- secrets
+- cryptographic material
+
+to clients.
+
+### Logging
+
+Use structured logs.
+
+Never log:
+
+- plaintext message contents
+- private keys
+- authentication tokens
+- refresh tokens
+- message ciphertext unnecessarily
+- personal data unnecessarily
+
+---
+
+# 30. What Has Been Accomplished So Far
+
+The project is NOT starting from zero.
+
+The following has already been completed.
+
+## Frontend
+
+The Expo/React Native project has been initialized.
+
+Dependencies and Expo configuration have been cleaned up.
+
+The initial Expo Doctor issues were resolved.
+
+The frontend is able to start successfully.
+
+---
+
+## Backend
+
+The backend repository has been initialized.
+
+Fastify is running.
+
+TypeScript is configured.
+
+ESM is configured.
+
+Environment configuration exists.
+
+PostgreSQL connection infrastructure exists.
+
+Redis connection infrastructure exists.
+
+CORS exists.
+
+Helmet exists.
+
+Rate limiting exists.
+
+JWT infrastructure has been installed.
+
+WebSocket infrastructure exists.
+
+Health checking exists.
+
+Graceful shutdown for PostgreSQL/Redis exists.
+
+---
+
+## Docker
+
+Local Docker infrastructure is working.
+
+PostgreSQL:
+
+```text
+PostgreSQL 17
+```
+
+Redis:
+
+```text
+Redis 8
+```
+
+Both run through Docker Compose.
+
+PostgreSQL is exposed locally on:
+
+```text
+5433
+```
+
+Redis is exposed locally on:
+
+```text
+6379
+```
+
+The Docker volumes are persistent.
+
+Do NOT delete them casually.
+
+In particular, do not use:
+
+```bash
+docker compose down -v
+```
+
+unless explicitly instructed, because that deletes the local PostgreSQL volume.
+
+---
+
+## Database
+
+The initial database architecture has now been designed.
+
+The canonical migration is:
+
+```text
+migrations/001_initial.sql
+```
+
+It defines the foundational relational model.
+
+Do not redesign this schema casually.
+
+If a future requirement requires a schema change, prefer a new migration:
+
+```text
+002_...
+003_...
+004_...
+```
+
+rather than rewriting an already-applied migration.
+
+---
+
+# 31. What We Have NOT Implemented Yet
+
+The following are intentionally still pending:
+
+- Drizzle ORM integration
+- Drizzle schema files
+- Migration runner configuration
+- OTP authentication
+- User registration
+- Device registration
+- JWT authentication flow
+- Refresh token rotation
+- Chat APIs
+- Group APIs
+- Broadcast APIs
+- Message APIs
+- Message synchronization
+- WebSocket authentication
+- WebSocket event protocol
+- Presence
+- Typing indicators
+- Push notifications
+- S3 media uploads
+- Media processing
+- Offline SQLite schema
+- Mobile sync engine
+- E2EE implementation
+- Signal Protocol integration
+- Message search
+- Link previews
+- Rate-limit policies
+- Background workers
+- Production AWS infrastructure
+- Automated tests
+- CI/CD
+
+These should be implemented incrementally.
+
+---
+
+# 32. Engineering Direction
+
+Build this as a serious production system.
+
+Do not:
+
+- Build everything in one giant file
+- Put business logic directly inside Fastify route handlers
+- Use Redis as the source of truth
+- Store large files in PostgreSQL
+- Send large media through the API server
+- Depend on WebSocket delivery for durability
+- Use timestamps as the message ordering mechanism
+- Create duplicate message records during retries
+- Assume one user has one device
+- Treat broadcast lists as groups
+- Implement custom cryptography
+- Create microservices prematurely
+- Add unnecessary infrastructure before it is needed
+
+Prefer:
+
+```text
+thin route
+    ↓
+validated request
+    ↓
+service
+    ↓
+repository / database
+    ↓
+domain event
+    ↓
+realtime / worker
+```
+
+Keep modules isolated and testable.
+
+---
+
+# 33. Current Development Philosophy
+
+We are going to build the system in vertical slices.
+
+A likely implementation order is:
+
+```text
+1. Database + Drizzle
+2. Auth
+3. Users + devices
+4. Direct chats
+5. Messages
+6. WebSocket realtime
+7. Offline sync
+8. Groups
+9. Broadcast Lists
+10. Media
+11. Push notifications
+12. Privacy/security
+13. E2EE
+14. Search
+15. Production hardening
+16. AWS deployment
+```
+
+The exact ordering may change as implementation progresses.
+
+---
+
+# 34. Current Instruction
+
+Again:
+
+## DO NOT TAKE ANY ACTION YET.
+
+At this stage, your task is only to understand:
+
+1. What application we are building
+2. Why the architecture is structured this way
+3. Which technologies we are using
+4. What has already been implemented
+5. What the database currently contains
+6. What remains to be built
+7. Which architectural decisions are already locked in
+
+Do not:
+
+- modify code
+- create files
+- delete files
+- install packages
+- run migrations
+- run database commands
+- change dependencies
+- refactor anything
+- initialize additional infrastructure
+
+Wait for the next explicit implementation instruction.

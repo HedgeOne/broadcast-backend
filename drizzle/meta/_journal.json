@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791204201924,
+      "tag": "0000_baseline_001",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791205444646,
+      "tag": "0001_authentication",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791276777947,
+      "tag": "0002_msg91_widget_verification",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791288738032,
+      "tag": "0003_user_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791368791630,
+      "tag": "0004_direct_messaging",
+      "breakpoints": true
+    }
+  ]
+}

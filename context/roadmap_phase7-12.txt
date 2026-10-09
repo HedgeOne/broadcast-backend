@@ -1,0 +1,214 @@
+Phase 7 — Offline-First Sync
+This is a major architectural phase.
+SQLite
+Design local tables for:
+users
+chats
+chat_members
+messages
+attachments
+pending_messages
+sync_state
+
+Sync engine
+SQLite
+   ↕
+Sync Engine
+   ↕
+REST
+   ↕
+WebSocket
+   ↕
+Backend
+
+Implement
+- [ ] Initial sync
+- [ ] Incremental sync
+- [ ] Cursor/sequence tracking
+- [ ] Local message cache
+- [ ] Local chat cache
+- [ ] Pending outbound queue
+- [ ] Retry
+- [ ] Reconnect
+- [ ] Conflict handling
+Test
+Kill network:
+send message
+close app
+reopen app
+restore network
+
+The message should eventually synchronize correctly.
+Milestone: The app works correctly through network interruptions.
+Phase 8 — Message Reliability & State
+Now harden messaging.
+Delivery
+Implement:
+sent
+delivered
+read
+
+Sequence synchronization
+Implement:
+last_delivered_sequence
+last_read_sequence
+
+Duplicate prevention
+Test:
+same client_message_id
+sent 1x
+sent 2x
+sent 5x
+
+Result:
+ONE message
+
+Ordering
+Test concurrent sends from multiple devices.
+Failure handling
+Test:
+- API timeout
+- WebSocket disconnect
+- Server restart
+- Redis restart
+- PostgreSQL restart
+- App killed during send
+- App backgrounded during send
+Milestone: Messaging is reliable, not merely functional.
+Phase 9 — Groups
+Backend
+- [ ] Create group
+- [ ] Add members
+- [ ] Remove members
+- [ ] Leave group
+- [ ] Promote admin
+- [ ] Demote admin
+- [ ] Transfer ownership
+- [ ] Change group name
+- [ ] Change description
+- [ ] Change avatar
+- [ ] Invite links
+- [ ] Join via invite
+- [ ] Admin-only messaging
+- [ ] Permission checks
+Frontend
+- [ ] Group creation flow
+- [ ] Member selection
+- [ ] Group chat
+- [ ] Group info
+- [ ] Member list
+- [ ] Admin controls
+- [ ] Invite screen
+Security
+Every group action must validate:
+authenticated user
+       ↓
+group membership
+       ↓
+role
+       ↓
+permission
+
+Milestone: Full group messaging works.
+Phase 10 — Broadcast Lists
+This is a major differentiator and must remain separate from groups.
+Backend
+- [ ] Create broadcast list
+- [ ] Rename broadcast list
+- [ ] Delete broadcast list
+- [ ] Add recipient
+- [ ] Remove recipient
+- [ ] List recipients
+- [ ] Send broadcast
+- [ ] Create recipient delivery records
+- [ ] Resolve/create target direct chats
+- [ ] Track sent
+- [ ] Track delivered
+- [ ] Track read
+- [ ] Broadcast history
+Example
+Alice
+
+Broadcast List:
+"Customers"
+
+       ┌── Bob
+Alice ─┼── Charlie
+       └── David
+
+When Alice sends:
+Hello everyone!
+
+Backend:
+broadcast_messages
+        │
+        ├── Bob
+        ├── Charlie
+        └── David
+
+But each recipient receives it in:
+Alice ↔ Bob
+Alice ↔ Charlie
+Alice ↔ David
+
+Frontend
+- [ ] Broadcast list screen
+- [ ] Create list
+- [ ] Edit list
+- [ ] Recipient management
+- [ ] Send broadcast
+- [ ] Broadcast history
+- [ ] Delivery/read information
+Milestone: Broadcast Lists behave correctly and independently from groups.
+Phase 11 — Media
+Upload architecture
+Mobile
+  ↓
+Backend
+  ↓
+Presigned S3 URL
+  ↓
+S3
+
+Backend
+- [ ] Create upload session
+- [ ] Generate presigned URL
+- [ ] Validate MIME type
+- [ ] Validate file size
+- [ ] Create attachment metadata
+- [ ] Generate thumbnails
+- [ ] Media cleanup
+Frontend
+- [ ] Camera
+- [ ] Gallery
+- [ ] Image preview
+- [ ] Video preview
+- [ ] Document picker
+- [ ] Upload progress
+- [ ] Retry failed uploads
+- [ ] Image message
+- [ ] Video message
+- [ ] Document message
+CDN
+Eventually:
+S3 → CloudFront → Mobile
+
+Milestone: Users can exchange images, videos and documents.
+Phase 12 — Voice Messages
+No voice calls.
+Only voice messages.
+Frontend
+- [ ] Microphone permission
+- [ ] Recording
+- [ ] Pause/resume
+- [ ] Cancel
+- [ ] Playback
+- [ ] Waveform
+- [ ] Duration
+- [ ] Upload
+Backend
+- [ ] Audio attachment
+- [ ] Storage
+- [ ] Metadata
+- [ ] Validation
+Milestone: Users can send and receive voice notes.

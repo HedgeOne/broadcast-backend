@@ -1,0 +1,582 @@
+Implement end-to-end email OTP verification using MSG91 for the existing React Native + backend application.
+
+IMPORTANT:
+Before making any changes, inspect the existing codebase thoroughly and understand:
+- React Native / Expo architecture
+- Backend architecture and framework
+- Existing authentication flow
+- Existing user model/database schema
+- Existing API conventions
+- Existing navigation
+- Existing auth/session/token handling
+- Existing environment variable conventions
+- Existing error handling and API response conventions
+
+Do NOT replace or rewrite the existing authentication architecture unnecessarily. Integrate MSG91 into the existing architecture cleanly.
+
+==================================================
+GOAL
+==================================================
+
+Implement this authentication flow:
+
+React Native
+    ↓
+User enters email
+    ↓
+MSG91 Mobile SDK sends OTP
+    ↓
+User receives email OTP
+    ↓
+User enters OTP
+    ↓
+MSG91 Mobile SDK verifies OTP
+    ↓
+MSG91 returns access token
+    ↓
+React Native sends access token to backend
+    ↓
+Backend calls MSG91 verifyAccessToken
+    ↓
+Backend obtains verified identity/email
+    ↓
+Backend finds or creates/updates the application user
+    ↓
+Backend establishes the application's normal authenticated session
+    ↓
+React Native enters authenticated state
+
+MSG91 should be responsible for proving ownership of the email address.
+
+Our backend should remain responsible for application authentication, users, sessions and authorization.
+
+==================================================
+MSG91 CREDENTIALS
+==================================================
+
+The following credentials already exist:
+
+MSG91_WIDGET_ID=<provided separately>
+MSG91_AUTH_TOKEN=<provided separately>
+MSG91_AUTH_KEY=<provided separately>
+
+SECURITY REQUIREMENTS:
+
+1. NEVER hard-code these credentials into source code.
+2. NEVER commit them to git.
+3. NEVER expose MSG91_AUTH_KEY to React Native.
+4. MSG91_AUTH_TOKEN is used by the React Native MSG91 Widget SDK.
+5. MSG91_AUTH_KEY is backend-only.
+6. Add the appropriate variables to the existing .env / environment configuration according to the project's conventions.
+7. Update .env.example with placeholders only.
+8. If any credential is already present in source code, move it to environment configuration.
+9. Do not print credentials in logs.
+10. Do not expose credentials in API responses.
+
+Use placeholders if credentials are not currently available in the environment.
+
+==================================================
+MSG91 IMPLEMENTATION
+==================================================
+
+Use the official MSG91 React Native package:
+
+@msg91comm/sendotp-react-native
+
+Install it using the package manager already used by the project.
+
+For iOS, make any required CocoaPods changes.
+
+Use the existing Expo/native architecture correctly. Do NOT eject from Expo unless the current application architecture absolutely requires it.
+
+Initialize MSG91 using:
+
+OTPWidget.initializeWidget(
+    MSG91_WIDGET_ID,
+    MSG91_AUTH_TOKEN
+);
+
+The application should initialize the MSG91 widget once during the authentication/app initialization lifecycle, not repeatedly on every render.
+
+==================================================
+EMAIL OTP FLOW
+==================================================
+
+The application currently needs EMAIL OTP.
+
+Design the implementation so that the authentication abstraction can later support SMS/mobile OTP without rewriting the authentication system.
+
+Use an abstraction similar to:
+
+VerificationChannel = 'email' | 'sms'
+
+For now only implement:
+
+email
+
+Do NOT implement SMS yet.
+
+==================================================
+SEND OTP
+==================================================
+
+When the user submits their email:
+
+1. Validate email format on the client.
+2. Normalize the email appropriately.
+3. Call MSG91:
+
+OTPWidget.sendOTP({
+    identifier: email
+});
+
+4. Handle loading state.
+5. Handle MSG91 errors.
+6. On success, transition to the OTP verification screen.
+7. Preserve the email/request context needed for verification.
+8. Do not log the OTP.
+9. Do not expose MSG91 internals unnecessarily to the user.
+
+Use the request ID returned by MSG91 according to the current SDK/API contract.
+
+Do not invent or assume the response shape. Inspect the installed SDK/types/documentation and implement against the actual response shape.
+
+==================================================
+OTP VERIFICATION
+==================================================
+
+On the OTP screen:
+
+1. User enters the 6-digit OTP.
+2. Validate that it is exactly 6 digits before submitting.
+3. Call:
+
+OTPWidget.verifyOTP({
+    reqId,
+    otp
+});
+
+4. Handle loading state.
+5. Handle invalid OTP.
+6. Handle expired OTP.
+7. Handle too many attempts.
+8. Handle network/provider errors.
+9. On successful verification, extract the MSG91 access token from the actual SDK response.
+
+Do NOT treat successful client-side OTP verification as sufficient to authenticate the application user.
+
+The access token must be sent to our backend.
+
+==================================================
+BACKEND API
+==================================================
+
+Add an endpoint following the project's existing API conventions.
+
+Preferred conceptual endpoint:
+
+POST /auth/email/verify
+
+Request:
+
+{
+    "accessToken": "<MSG91 access token>"
+}
+
+If the existing backend uses a different naming convention, follow the existing convention rather than blindly creating this exact path.
+
+The backend must:
+
+1. Validate the request.
+2. Reject missing/invalid accessToken.
+3. Call MSG91:
+
+POST https://control.msg91.com/api/v5/widget/verifyAccessToken
+
+Headers:
+
+Content-Type: application/json
+
+Body:
+
+{
+    "authkey": process.env.MSG91_AUTH_KEY,
+    "access-token": accessToken
+}
+
+4. Do not expose the MSG91 Auth Key.
+5. Do not log the access token.
+6. Validate the MSG91 response.
+7. Extract the verified email/identity from MSG91's response.
+8. Never trust an email supplied independently by the client if MSG91 provides the verified identity.
+9. Use the verified identity returned by MSG91 as the source of truth.
+
+Use the project's existing HTTP client/service layer if one exists rather than introducing another HTTP library unnecessarily.
+
+==================================================
+USER CREATION / LOGIN
+==================================================
+
+After MSG91 verification succeeds:
+
+1. Find the user by the verified email.
+2. If the user exists:
+   - mark email as verified if necessary
+   - update relevant verification timestamps if the existing schema supports them
+   - authenticate the user
+3. If the user does not exist:
+   - follow the application's existing registration/onboarding behavior
+   - create the user only if the existing auth design permits automatic account creation
+   - otherwise return the appropriate "registration required" state
+
+DO NOT invent a new user-registration policy.
+
+Inspect the existing application and preserve its current semantics.
+
+The backend must ultimately issue the application's normal authentication/session credentials.
+
+If the project uses:
+- JWT → issue the existing JWT
+- refresh tokens → use the existing refresh-token mechanism
+- cookie sessions → use the existing session mechanism
+- Supabase Auth → integrate with the existing Supabase Auth flow rather than creating a parallel authentication system
+
+Do NOT introduce a second authentication/session system.
+
+==================================================
+REACT NATIVE SESSION HANDLING
+==================================================
+
+After the backend successfully authenticates the user:
+
+1. Store/use the application's existing session mechanism.
+2. Update the existing auth context/store.
+3. Refresh the current user state.
+4. Navigate to the correct authenticated screen using the existing navigation architecture.
+5. Do not store the MSG91 access token as the application's long-term auth token unless there is an explicit existing reason to do so.
+6. MSG91 access tokens are provider credentials, not our application's session credentials.
+
+==================================================
+RESEND OTP
+==================================================
+
+Implement resend using MSG91's SDK retry functionality:
+
+OTPWidget.retryOTP(...)
+
+Use the actual SDK signature/types.
+
+UI requirements:
+
+- Disable resend button during cooldown.
+- Show countdown.
+- Respect MSG91's configured resend interval.
+- Handle resend errors.
+- Do not allow unlimited resend requests.
+- Prevent accidental repeated taps.
+- Preserve the existing email/request context.
+
+Do not implement a separate OTP generation system.
+
+MSG91 is responsible for generating and verifying OTPs.
+
+==================================================
+UI/UX
+==================================================
+
+Follow the existing application's design system.
+
+Do NOT introduce a new visual language.
+
+The email verification experience should have:
+
+EMAIL SCREEN
+
+- Email input
+- Clear validation
+- Primary "Continue"/"Send code" action
+- Loading state
+- Error state
+
+OTP SCREEN
+
+- 6-digit OTP input
+- Auto-focus where appropriate
+- Numeric keyboard
+- Clear verification action
+- Loading state
+- Invalid OTP error
+- Expired OTP error
+- Resend action
+- Resend countdown
+- "Change email" action
+
+If the existing app uses a specific component library, use it.
+
+Do not duplicate existing UI components.
+
+==================================================
+ERROR HANDLING
+==================================================
+
+Create a clean error mapping between:
+
+MSG91/provider errors
+        ↓
+Backend errors
+        ↓
+React Native user-facing errors
+
+Users should see useful messages such as:
+
+- "Please enter a valid email address."
+- "We couldn't send the verification code. Please try again."
+- "The verification code is incorrect."
+- "The verification code has expired. Please request a new one."
+- "Too many attempts. Please try again later."
+- "Something went wrong. Please try again."
+
+Do not expose:
+- MSG91 API responses verbatim
+- Auth keys
+- access tokens
+- internal stack traces
+- database errors
+
+Detailed provider errors may be logged server-side only if the existing logging policy allows it, with secrets/token values redacted.
+
+==================================================
+SECURITY
+==================================================
+
+Implement appropriate protections.
+
+Client:
+- Never contain MSG91 Auth Key.
+- Never log OTPs.
+- Never log access tokens.
+- Validate email and OTP format.
+- Prevent repeated submissions.
+
+Backend:
+- Never trust client-provided verification status.
+- Verify MSG91 access token server-side.
+- Use verified identity from MSG91.
+- Rate-limit authentication endpoints according to the existing backend infrastructure.
+- Avoid user enumeration where the existing authentication design requires it.
+- Validate all request bodies.
+- Do not expose provider credentials.
+- Redact tokens/secrets from logs.
+- Do not persist the MSG91 access token unnecessarily.
+
+==================================================
+ENVIRONMENT CONFIGURATION
+==================================================
+
+Add environment variables using the project's existing configuration pattern.
+
+Required:
+
+MSG91_WIDGET_ID=<widget id>
+MSG91_AUTH_TOKEN=<widget auth token>
+MSG91_AUTH_KEY=<backend auth key>
+
+IMPORTANT:
+
+MSG91_AUTH_TOKEN may be used by the React Native application because it is the widget token intended for client-side integration.
+
+MSG91_AUTH_KEY MUST NEVER be included in the React Native bundle.
+
+If Expo environment variables are used, make sure only the widget ID and appropriate client-side token are exposed through the public/client configuration mechanism.
+
+Never expose:
+
+MSG91_AUTH_KEY
+
+through:
+
+EXPO_PUBLIC_*
+NEXT_PUBLIC_*
+or any equivalent client-side environment mechanism.
+
+==================================================
+TESTING
+==================================================
+
+Add/update tests for:
+
+1. Valid email → OTP send initiated.
+2. Invalid email → validation error.
+3. MSG91 send failure → appropriate error.
+4. Valid OTP → successful verification.
+5. Invalid OTP → appropriate error.
+6. Expired OTP → appropriate error.
+7. Resend OTP.
+8. MSG91 access token verification succeeds.
+9. MSG91 access token verification fails.
+10. Backend never trusts a client-supplied email over the verified MSG91 identity.
+11. Existing user login.
+12. New user registration, according to the existing application's rules.
+13. Auth session creation.
+14. Auth state restoration after app restart.
+15. MSG91 Auth Key is never exposed to the client.
+16. Sensitive tokens are not written to logs.
+
+Mock MSG91 in automated tests.
+
+Do NOT make real MSG91 requests in unit/integration tests unless the repository already has an explicit external-service test suite.
+
+==================================================
+ARCHITECTURE
+==================================================
+
+Prefer a provider abstraction rather than scattering MSG91-specific logic throughout the authentication code.
+
+For example:
+
+OTP / Verification Service
+        │
+        └── MSG91 implementation
+
+The application should depend on the abstraction where practical.
+
+The future architecture should allow:
+
+Email OTP → MSG91
+SMS OTP   → MSG91
+
+without rewriting the auth flow.
+
+Do not over-engineer this with unnecessary interfaces/classes if the existing codebase uses a simpler architectural style. Follow existing project conventions.
+
+==================================================
+IMPORTANT MSG91 FLOW
+==================================================
+
+Use this exact conceptual flow:
+
+1. React Native initializes MSG91 Widget SDK with:
+   - Widget ID
+   - Auth Token
+
+2. User enters email.
+
+3. React Native:
+   OTPWidget.sendOTP({
+       identifier: email
+   });
+
+4. MSG91 sends OTP to email.
+
+5. User enters OTP.
+
+6. React Native:
+   OTPWidget.verifyOTP({
+       reqId,
+       otp
+   });
+
+7. MSG91 returns access token on successful verification.
+
+8. React Native sends the access token to our backend.
+
+9. Backend calls:
+
+POST https://control.msg91.com/api/v5/widget/verifyAccessToken
+
+with:
+
+{
+    "authkey": process.env.MSG91_AUTH_KEY,
+    "access-token": accessToken
+}
+
+10. Backend validates MSG91 response.
+
+11. Backend obtains the verified email/identity.
+
+12. Backend creates/finds the application user.
+
+13. Backend issues the application's normal session.
+
+14. React Native stores/uses the application's session and enters authenticated state.
+
+==================================================
+DO NOT DO THESE THINGS
+==================================================
+
+Do NOT:
+
+- Generate OTPs ourselves.
+- Store plaintext OTPs.
+- Send OTP email ourselves.
+- Put MSG91 Auth Key in React Native.
+- Trust the email sent alongside the access token instead of the verified MSG91 identity.
+- Use MSG91's access token as our permanent application session.
+- Create a parallel authentication system if one already exists.
+- Rewrite unrelated authentication code.
+- Replace existing UI components unnecessarily.
+- Introduce unnecessary dependencies.
+- Hard-code credentials.
+- Commit secrets.
+- Log OTPs or access tokens.
+- Make production MSG91 calls from automated tests.
+
+==================================================
+IMPLEMENTATION PROCESS
+==================================================
+
+Work in phases:
+
+PHASE 1:
+Inspect the repository and identify:
+- frontend entry points
+- backend entry points
+- authentication architecture
+- user schema
+- session architecture
+- navigation
+- environment configuration
+- existing API client/server patterns
+
+PHASE 2:
+Present a concise implementation plan based on the actual repository.
+
+PHASE 3:
+Implement the MSG91 integration.
+
+PHASE 4:
+Implement/update authentication UI.
+
+PHASE 5:
+Implement backend verification.
+
+PHASE 6:
+Add tests.
+
+PHASE 7:
+Run:
+- type checking
+- linting
+- unit tests
+- relevant integration tests
+- existing build checks
+
+Fix any regressions.
+
+PHASE 8:
+Provide a final implementation report containing:
+
+1. Files created/modified.
+2. Authentication flow implemented.
+3. Environment variables required.
+4. Any database changes.
+5. Any native/Expo configuration changes.
+6. Commands required to run/test.
+7. Tests executed and results.
+8. Any remaining manual MSG91 dashboard configuration.
+9. Any security considerations.
+10. Any assumptions made.
+
+IMPORTANT:
+Do not stop after creating a plan. Once you understand the repository, implement the complete flow end-to-end.

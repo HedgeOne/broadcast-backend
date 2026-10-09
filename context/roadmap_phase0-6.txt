@@ -1,0 +1,348 @@
+PHASE 0
+Foundation & Developer Tooling
+        ↓
+PHASE 1
+Database + ORM
+        ↓
+PHASE 2
+Authentication & Identity
+        ↓
+PHASE 3
+Users + Devices + Sessions
+        ↓
+PHASE 4
+Direct Chats
+        ↓
+PHASE 5
+Core Messaging
+        ↓
+PHASE 6
+Realtime WebSocket
+        ↓
+PHASE 7
+Offline-First Sync
+        ↓
+PHASE 8
+Message Reliability & State
+        ↓
+PHASE 9
+Groups
+        ↓
+PHASE 10
+Broadcast Lists
+        ↓
+PHASE 11
+Media & Attachments
+        ↓
+PHASE 12
+Voice Messages
+        ↓
+PHASE 13
+Push Notifications
+        ↓
+PHASE 14
+Presence & Typing
+        ↓
+PHASE 15
+Message Features
+        ↓
+PHASE 16
+Privacy & Account
+        ↓
+PHASE 17
+E2EE
+        ↓
+PHASE 18
+Search
+        ↓
+PHASE 19
+Testing & Security
+        ↓
+PHASE 20
+Performance & Scaling
+        ↓
+PHASE 21
+AWS Staging
+        ↓
+PHASE 22
+Production
+
+Phase 0 — Foundation & Developer Tooling
+0.1 Backend
+- [x] Initialize Node.js project
+- [x] TypeScript
+- [x] Fastify
+- [x] Environment configuration
+- [x] CORS
+- [x] Helmet
+- [x] Rate limiting
+- [x] JWT dependency
+- [x] WebSocket dependency
+- [x] PostgreSQL client
+- [x] Redis client
+- [x] Health endpoint
+- [x] Graceful shutdown
+0.2 Frontend
+- [x] Expo project
+- [x] React Native
+- [x] TypeScript
+- [x] Expo Router
+- [x] Initial dependencies
+- [x] Expo Doctor cleanup
+0.3 Local infrastructure
+- [x] Docker Desktop
+- [x] PostgreSQL 17
+- [x] Redis 8
+- [x] Docker Compose
+- [x] Persistent volumes
+- [x] Environment configuration
+0.4 Remaining
+- [ ] ESLint configuration
+- [ ] Prettier configuration
+- [ ] Git hooks
+- [ ] Environment validation
+- [ ] Development logging
+- [ ] Test framework
+- [ ] API documentation strategy
+
+
+Phase 1 — Database + Drizzle
+We already have the SQL foundation.
+1.1 ORM
+- [ ] Install Drizzle ORM
+- [ ] Install Drizzle Kit
+- [ ] Configure Drizzle
+- [ ] Configure migration directory
+- [ ] Configure schema directory
+1.2 Drizzle schemas
+Create:
+src/db/schema/
+├── users.ts
+├── devices.ts
+├── sessions.ts
+├── crypto.ts
+├── chats.ts
+├── groups.ts
+├── messages.ts
+├── broadcasts.ts
+├── media.ts
+├── privacy.ts
+└── index.ts
+
+1.3 Database tooling
+- [ ] Migration command
+- [ ] Migration status
+- [ ] Database reset for development
+- [ ] Database seed system
+- [ ] Test database strategy
+1.4 Verification
+- [ ] Run Migration 001
+- [ ] Verify all tables
+- [ ] Verify indexes
+- [ ] Verify constraints
+- [ ] Verify triggers
+- [ ] Verify foreign keys
+Milestone: Backend can reliably communicate with the complete local database.
+
+
+Phase 2 — Authentication
+This is our first real product feature.
+2.1 OTP authentication
+- [ ] Request OTP
+- [ ] Generate OTP
+- [ ] Store hashed OTP
+- [ ] OTP expiry
+- [ ] OTP attempt limits
+- [ ] Rate limiting
+- [ ] Verify OTP
+- [ ] Create user if necessary
+- [ ] Login existing user
+Initially, we can use a development OTP provider/mock.
+Production SMS provider comes later.
+2.2 JWT
+Implement:
+access token
+refresh token
+
+- [ ] Access token generation
+- [ ] Refresh token generation
+- [ ] Refresh token hashing
+- [ ] Token rotation
+- [ ] Token revocation
+- [ ] Expiration
+- [ ] Device association
+2.3 Authentication middleware
+Every protected API should resolve:
+request
+   ↓
+JWT
+   ↓
+user
+   ↓
+device
+
+2.4 Frontend auth
+- [ ] Phone number screen
+- [ ] OTP screen
+- [ ] Authentication store
+- [ ] SecureStore token storage
+- [ ] Automatic token refresh
+- [ ] Logout
+Milestone: A user can register/login from the mobile app.
+
+Phase 3 — Users + Devices
+Backend
+- [ ] User profile API
+- [ ] Update profile
+- [ ] Username
+- [ ] Display name
+- [ ] Avatar
+- [ ] Phone verification
+- [ ] Device registration
+- [ ] Device listing
+- [ ] Device revocation
+- [ ] Push token registration
+Frontend
+- [ ] Profile screen
+- [ ] Edit profile
+- [ ] Avatar selection
+- [ ] Device/session screen
+Multi-device foundation
+Test:
+User
+ ├── iPhone
+ └── Android
+
+Both devices should authenticate independently.
+Milestone: One user can securely use multiple devices.
+
+
+Phase 4 — Direct Chats
+Now we create the first real conversation.
+Backend
+- [ ] Find user by phone
+- [ ] Find user by username
+- [ ] Create direct chat
+- [ ] Get existing direct chat
+- [ ] List user's chats
+- [ ] Chat membership authorization
+- [ ] Archive chat
+- [ ] Mute chat
+Database logic
+Enforce:
+Alice ↔ Bob
+
+creates exactly one chat.
+Not:
+Alice ↔ Bob #1
+Alice ↔ Bob #2
+Alice ↔ Bob #3
+
+Frontend
+- [ ] Chat list
+- [ ] New chat
+- [ ] Contact search
+- [ ] Chat screen
+- [ ] Empty chat state
+- [ ] Chat header
+Milestone: Two authenticated users can open a conversation.
+
+
+Phase 5 — Core Messaging
+This is the core product.
+Backend
+Implement:
+POST /messages
+GET /chats/:id/messages
+
+and services for:
+- [ ] Send message
+- [ ] Fetch messages
+- [ ] Pagination
+- [ ] Sequence generation
+- [ ] Client message ID
+- [ ] Idempotency
+- [ ] Reply
+- [ ] Edit
+- [ ] Delete
+Message lifecycle
+CLIENT
+  ↓
+client_message_id
+  ↓
+SERVER
+  ↓
+validate
+  ↓
+authorize
+  ↓
+transaction
+  ↓
+assign sequence
+  ↓
+persist
+  ↓
+ACK
+
+Frontend
+- [ ] Message composer
+- [ ] Send text
+- [ ] Message bubble
+- [ ] Timestamp
+- [ ] Message status
+- [ ] Pagination
+- [ ] Reply UI
+- [ ] Edit UI
+- [ ] Delete UI
+Milestone: Alice and Bob can reliably exchange text messages through REST.
+
+
+Phase 6 — WebSocket Realtime
+Now we remove the need to manually refresh.
+Connection lifecycle
+CONNECT
+ ↓
+AUTHENTICATE
+ ↓
+REGISTER DEVICE
+ ↓
+SYNC
+ ↓
+CONNECTED
+
+Events
+Define a versioned protocol:
+message.new
+message.updated
+message.deleted
+
+message.delivered
+message.read
+
+chat.updated
+
+typing.started
+typing.stopped
+
+presence.updated
+
+Backend
+- [ ] WebSocket authentication
+- [ ] Connection registry
+- [ ] User → device mapping
+- [ ] Chat → connection routing
+- [ ] Event serialization
+- [ ] Reconnection handling
+- [ ] Event authorization
+Redis
+Use Redis for:
+- [ ] Connection routing
+- [ ] Presence
+- [ ] Distributed coordination
+Frontend
+- [ ] WebSocket manager
+- [ ] Authentication
+- [ ] Reconnection
+- [ ] Event handlers
+- [ ] Connection state
+Milestone: Messages appear instantly on the recipient's device.

@@ -1,0 +1,1041 @@
+# Broadcast — Complete Phase 0 + Begin Phase 1
+
+You are working on the **Broadcast** messaging application.
+
+We have already established the product requirements, architecture, local infrastructure, and PostgreSQL schema.
+
+Your task now is to:
+
+1. Complete the **remaining work in Phase 0 — Foundation & Developer Tooling**
+2. Begin and complete the appropriate parts of **Phase 1 — Database + Drizzle**
+3. Do NOT begin Phase 2 or any application feature implementation yet.
+
+Work carefully and incrementally. Do not redesign the architecture unless you identify a concrete technical problem.
+
+---
+
+# 1. CRITICAL SCOPE RULE
+
+For this task, you are ONLY authorized to work on:
+
+```text
+Phase 0 — Foundation & Developer Tooling
+Phase 1 — Database + Drizzle
+```
+
+Do NOT implement:
+
+- OTP authentication
+- JWT authentication flow
+- User APIs
+- Device APIs
+- Chat APIs
+- Group APIs
+- Broadcast APIs
+- Message APIs
+- WebSocket messaging protocol
+- Presence
+- Typing indicators
+- Push notifications
+- Media uploads
+- E2EE
+- Mobile messaging UI
+- Offline sync engine
+
+Those belong to later phases.
+
+If you discover something that needs to be done for a later phase, document it rather than implementing it.
+
+---
+
+# 2. PROJECT STRUCTURE
+
+There are two repositories.
+
+## Mobile
+
+```text
+~/Desktop/broadcast
+```
+
+Repository:
+
+```text
+broadcast
+```
+
+## Backend
+
+```text
+~/Desktop/broadcast/broadcast-backend
+```
+
+Repository:
+
+```text
+broadcast-backend
+```
+
+You are primarily working in:
+
+```text
+broadcast-backend
+```
+
+Do not modify the mobile repository unless there is a genuinely necessary Phase 0 configuration change.
+
+---
+
+# 3. CURRENT BACKEND STACK
+
+The backend uses:
+
+- Node.js 24
+- TypeScript
+- ESM
+- Fastify
+- PostgreSQL 17
+- Redis 8
+- Drizzle ORM
+- Zod
+- ioredis
+- Fastify WebSocket
+- Fastify JWT
+- Fastify CORS
+- Fastify Helmet
+- Fastify Rate Limit
+
+PostgreSQL is the durable source of truth.
+
+Redis is for ephemeral/distributed state.
+
+---
+
+# 4. CURRENT BACKEND STRUCTURE
+
+Current structure is approximately:
+
+```text
+broadcast-backend/
+│
+├── src/
+│   ├── config/
+│   ├── db/
+│   ├── redis/
+│   ├── middleware/
+│   ├── realtime/
+│   ├── workers/
+│   │
+│   └── modules/
+│       ├── auth/
+│       ├── users/
+│       ├── devices/
+│       ├── chats/
+│       ├── groups/
+│       ├── broadcasts/
+│       ├── messages/
+│       ├── media/
+│       ├── notifications/
+│       ├── presence/
+│       └── privacy/
+│
+├── migrations/
+├── tests/
+├── package.json
+├── tsconfig.json
+├── docker-compose.yml
+├── .env
+└── .env.example
+```
+
+Do not unnecessarily change this structure.
+
+---
+
+# 5. CURRENT LOCAL INFRASTRUCTURE
+
+Docker is already configured.
+
+PostgreSQL:
+
+```text
+PostgreSQL 17
+container: broadcast-postgres
+host port: 5433
+container port: 5432
+database: broadcast
+user: broadcast
+```
+
+Redis:
+
+```text
+Redis 8
+container: broadcast-redis
+host port: 6379
+container port: 6379
+```
+
+Current development environment:
+
+```env
+NODE_ENV=development
+PORT=3000
+DATABASE_URL=postgresql://broadcast:broadcast_dev_password@localhost:5433/broadcast
+REDIS_URL=redis://localhost:6379
+```
+
+Docker uses persistent named volumes.
+
+DO NOT delete the PostgreSQL volume.
+
+Do NOT run:
+
+```bash
+docker compose down -v
+```
+
+unless explicitly instructed.
+
+---
+
+# 6. CURRENT BACKEND IMPLEMENTATION
+
+The following already exists and works:
+
+- Fastify server
+- TypeScript configuration
+- ESM configuration
+- dotenv configuration
+- CORS
+- Helmet
+- rate limiting
+- PostgreSQL client
+- Redis client
+- WebSocket foundation
+- health endpoint
+- graceful shutdown
+- Redis connection lifecycle handling
+
+The health endpoint checks PostgreSQL and Redis.
+
+Do not unnecessarily rewrite these components.
+
+Before changing existing infrastructure, inspect the current implementation.
+
+---
+
+# 7. DATABASE SCHEMA
+
+The canonical initial database migration already exists conceptually as:
+
+```text
+migrations/001_initial.sql
+```
+
+This migration defines the initial production-oriented relational model.
+
+It includes:
+
+## Identity
+
+```text
+users
+devices
+sessions
+device_keys
+one_time_prekeys
+```
+
+## Conversations
+
+```text
+chats
+chat_members
+groups
+group_members
+```
+
+## Messaging
+
+```text
+messages
+message_attachments
+message_reactions
+starred_messages
+pinned_messages
+```
+
+## Broadcast
+
+```text
+broadcast_lists
+broadcast_list_members
+broadcast_messages
+broadcast_message_recipients
+```
+
+## Privacy/settings
+
+```text
+blocked_users
+privacy_settings
+user_settings
+user_contacts
+```
+
+## Migration tracking
+
+```text
+schema_migrations
+```
+
+The schema also includes:
+
+- indexes
+- foreign keys
+- constraints
+- updated_at triggers
+- default user settings trigger
+
+Do NOT redesign this schema as part of this task.
+
+If you find a genuine SQL problem, stop and explain it rather than silently changing the architecture.
+
+---
+
+# 8. PHASE 0 — REMAINING WORK
+
+Complete the remaining foundation/tooling work.
+
+## 8.1 Inspect the current project first
+
+Before modifying anything:
+
+- inspect `package.json`
+- inspect `tsconfig.json`
+- inspect `src/server.ts`
+- inspect `src/db/client.ts`
+- inspect `src/redis/client.ts`
+- inspect `.env`
+- inspect `.env.example`
+- inspect `docker-compose.yml`
+- inspect `migrations/001_initial.sql`
+- inspect existing tests
+- inspect existing scripts
+
+Do not assume the current files exactly match this prompt.
+
+Use the existing implementation as the source of truth.
+
+---
+
+# 9. Phase 0 — Code Quality
+
+Ensure the backend has working:
+
+## TypeScript
+
+Run:
+
+```bash
+pnpm typecheck
+```
+
+There must be no TypeScript errors.
+
+Do not weaken TypeScript strictness to make errors disappear.
+
+---
+
+# 10. Phase 0 — ESLint
+
+Inspect the existing ESLint setup.
+
+If it is incomplete, establish a clean TypeScript ESLint configuration appropriate for this backend.
+
+The goal is:
+
+```bash
+pnpm lint
+```
+
+should work.
+
+Do not introduce dozens of arbitrary style rules.
+
+Prioritize:
+
+- TypeScript correctness
+- unused variables/imports
+- accidental `any`
+- unsafe patterns
+- obvious bugs
+
+---
+
+# 11. Phase 0 — Prettier
+
+Ensure Prettier is configured.
+
+Add a reasonable configuration if one does not already exist.
+
+For example:
+
+```text
+.prettierrc
+.prettierignore
+```
+
+The project should have a working command such as:
+
+```bash
+pnpm format
+```
+
+and optionally:
+
+```bash
+pnpm format:check
+```
+
+Do not reformat unrelated files unnecessarily.
+
+---
+
+# 12. Phase 0 — Package Scripts
+
+Ensure `package.json` has useful development scripts.
+
+At minimum:
+
+```text
+dev
+build
+start
+typecheck
+lint
+format
+format:check
+```
+
+Add database scripts only once Drizzle is configured.
+
+Do not remove useful existing scripts.
+
+---
+
+# 13. Phase 0 — Environment Validation
+
+Create a proper environment validation layer.
+
+The application should validate required environment variables at startup.
+
+At minimum:
+
+```text
+NODE_ENV
+PORT
+DATABASE_URL
+REDIS_URL
+```
+
+Use Zod.
+
+Prefer something like:
+
+```text
+src/config/env.ts
+```
+
+The rest of the application should consume the validated configuration rather than repeatedly reading `process.env`.
+
+Do not expose secrets in logs.
+
+---
+
+# 14. Phase 0 — Configuration Cleanup
+
+Centralize backend configuration.
+
+For example:
+
+```text
+src/config/
+├── env.ts
+└── index.ts
+```
+
+Do not over-engineer this.
+
+The objective is:
+
+```text
+process.env
+     ↓
+validated config
+     ↓
+application
+```
+
+not:
+
+```text
+process.env
+ ↓
+random files throughout the codebase
+```
+
+---
+
+# 15. Phase 0 — Testing Foundation
+
+Establish a basic backend test framework if one does not already exist.
+
+We need the ability to eventually test:
+
+- services
+- repositories
+- API routes
+- authentication
+- WebSockets
+- database behavior
+
+For this task, create only the foundation and a small smoke test.
+
+At minimum, verify that the health endpoint can be tested.
+
+Do NOT write the full application's test suite yet.
+
+---
+
+# 16. Phase 0 — Health Check Verification
+
+The existing health endpoint should continue to work.
+
+Verify:
+
+```text
+PostgreSQL healthy
+Redis healthy
+```
+
+Then verify graceful degraded behavior if Redis is unavailable.
+
+Do not make Redis errors crash the backend unnecessarily.
+
+The existing behavior should remain compatible with this architecture.
+
+---
+
+# 17. PHASE 1 — DRIZZLE + DATABASE
+
+After Phase 0 cleanup, begin Phase 1.
+
+Install/configure:
+
+```text
+drizzle-orm
+drizzle-kit
+postgres
+```
+
+Use the PostgreSQL driver appropriate for the selected Drizzle configuration.
+
+Do not introduce a second database ORM.
+
+---
+
+# 18. Drizzle Directory Structure
+
+Create a clean structure such as:
+
+```text
+src/db/
+├── client.ts
+├── schema/
+│   ├── users.ts
+│   ├── devices.ts
+│   ├── sessions.ts
+│   ├── crypto.ts
+│   ├── chats.ts
+│   ├── groups.ts
+│   ├── messages.ts
+│   ├── broadcasts.ts
+│   ├── media.ts
+│   ├── privacy.ts
+│   └── index.ts
+└── index.ts
+```
+
+The exact split may vary slightly if there is a strong reason.
+
+Keep schemas modular.
+
+Do NOT put the entire database into one giant `schema.ts`.
+
+---
+
+# 19. Drizzle Database Client
+
+Integrate Drizzle with the existing PostgreSQL connection strategy.
+
+There must be one clear database access path.
+
+Conceptually:
+
+```text
+PostgreSQL
+     ↑
+postgres driver
+     ↑
+Drizzle
+     ↑
+repositories/services
+```
+
+Avoid creating a new connection pool every time a service is called.
+
+Reuse the existing application database connection/pool.
+
+---
+
+# 20. Drizzle Schema
+
+Represent Migration 001 in Drizzle schema definitions.
+
+The TypeScript schema should correspond to the existing SQL schema.
+
+Do not use Drizzle to redesign the database.
+
+The following concepts must remain represented:
+
+```text
+users
+devices
+sessions
+device_keys
+one_time_prekeys
+
+chats
+chat_members
+groups
+group_members
+
+messages
+message_attachments
+message_reactions
+starred_messages
+pinned_messages
+
+broadcast_lists
+broadcast_list_members
+broadcast_messages
+broadcast_message_recipients
+
+blocked_users
+privacy_settings
+user_settings
+user_contacts
+```
+
+Also preserve:
+
+- UUID primary keys
+- foreign keys
+- unique constraints
+- indexes
+- nullable fields
+- enum semantics
+- timestamps
+- sequence fields
+- client_message_id idempotency constraints
+
+---
+
+# 21. Important Drizzle Constraint
+
+Do not assume that every PostgreSQL construct maps cleanly to a simple Drizzle declaration.
+
+In particular, inspect:
+
+- partial unique indexes
+- check constraints
+- enum definitions
+- trigger functions
+- expression indexes
+- composite indexes
+
+The existing SQL migration remains authoritative for database behavior.
+
+Drizzle schema definitions should accurately model what the database contains.
+
+Do not remove SQL-level constraints just because they are inconvenient to represent.
+
+---
+
+# 22. Migration Strategy
+
+We already have:
+
+```text
+migrations/001_initial.sql
+```
+
+Do NOT regenerate or overwrite this migration unnecessarily.
+
+The objective is to make Drizzle aware of the existing schema and establish a clean migration workflow going forward.
+
+Before changing migration strategy, inspect the existing repository and determine whether Migration 001 has already been applied.
+
+We must avoid:
+
+```text
+database already contains tables
+        +
+Drizzle thinks database is empty
+        +
+migration attempts to recreate everything
+```
+
+If the migration has already been applied, preserve that state.
+
+---
+
+# 23. Drizzle Configuration
+
+Create the appropriate Drizzle configuration file.
+
+Typically:
+
+```text
+drizzle.config.ts
+```
+
+It should point to:
+
+```text
+src/db/schema/**/*.ts
+```
+
+and the appropriate migration directory.
+
+Use:
+
+```text
+DATABASE_URL
+```
+
+from the validated environment configuration.
+
+Do not hardcode database credentials.
+
+---
+
+# 24. Database Commands
+
+Add clear package scripts for database operations.
+
+For example:
+
+```text
+db:generate
+db:migrate
+db:push
+db:studio
+```
+
+But be careful with `db:push`.
+
+For this production-oriented project, migrations should be the normal mechanism for schema changes.
+
+Do not use `db:push` as the standard development workflow if it bypasses our migration discipline.
+
+Document what each command is intended for.
+
+---
+
+# 25. Migration Verification
+
+Once Drizzle is configured:
+
+Verify the database from both perspectives.
+
+### PostgreSQL
+
+Confirm:
+
+```text
+tables
+indexes
+constraints
+triggers
+enums
+```
+
+### Drizzle
+
+Confirm:
+
+- schema imports successfully
+- TypeScript compiles
+- Drizzle can connect
+- migration tooling works
+
+Do not reset or destroy the local database just to make Drizzle happy.
+
+---
+
+# 26. Database Seed
+
+Create a minimal development seed strategy if useful.
+
+The seed should NOT create fake production-like data.
+
+A minimal development seed may create:
+
+```text
+2–3 test users
+```
+
+and optionally:
+
+```text
+1 direct chat
+1 group
+1 broadcast list
+```
+
+However, only create the seed if it is useful for validating the database layer.
+
+Do not build application services for this.
+
+---
+
+# 27. Database Client Health
+
+The existing:
+
+```text
+checkDatabaseConnection()
+```
+
+should continue to work.
+
+Drizzle integration must not break the existing health endpoint.
+
+Ideally:
+
+```text
+Fastify
+ ├── raw/driver connection
+ └── Drizzle database instance
+```
+
+should share the same underlying connection strategy rather than maintaining unnecessary independent pools.
+
+If a clean shared configuration is possible, implement it.
+
+---
+
+# 28. What NOT to Do
+
+Do not:
+
+- implement authentication
+- implement OTP
+- implement users API
+- implement chats API
+- implement messages API
+- implement groups API
+- implement broadcasts API
+- implement E2EE
+- implement frontend screens
+- implement SQLite sync
+- implement media upload
+- implement push notifications
+- introduce AWS infrastructure
+- introduce microservices
+- add Kafka
+- add RabbitMQ
+- add Kubernetes
+- add unnecessary abstractions
+- rewrite working infrastructure
+- delete the PostgreSQL Docker volume
+- reset the database unnecessarily
+- change Migration 001 without first explaining why
+
+---
+
+# 29. Acceptance Criteria
+
+At the end of this task, the following should work.
+
+## Backend
+
+```bash
+pnpm typecheck
+```
+
+passes.
+
+```bash
+pnpm lint
+```
+
+passes.
+
+```bash
+pnpm format:check
+```
+
+passes if this script exists.
+
+```bash
+pnpm build
+```
+
+passes.
+
+```bash
+pnpm dev
+```
+
+starts successfully.
+
+---
+
+## Database
+
+PostgreSQL Docker container is healthy.
+
+Redis Docker container is healthy.
+
+The database contains the Migration 001 schema.
+
+Drizzle can connect to PostgreSQL.
+
+Drizzle schema imports successfully.
+
+Drizzle migration tooling is configured.
+
+---
+
+## Health endpoint
+
+This should still work:
+
+```text
+GET /health
+```
+
+and return healthy status when:
+
+```text
+PostgreSQL = healthy
+Redis = healthy
+```
+
+---
+
+# 30. Final Verification
+
+Before finishing, run:
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+Then verify:
+
+```bash
+psql "$DATABASE_URL"
+```
+
+and inspect:
+
+```sql
+\dt
+```
+
+and:
+
+```sql
+SELECT version, name, applied_at
+FROM schema_migrations;
+```
+
+Do not report success unless the commands actually pass.
+
+---
+
+# 31. Final Output Required From You
+
+When you finish, do NOT dump all changed files into the response.
+
+Instead provide a concise implementation report:
+
+## Completed
+
+List exactly what was implemented.
+
+## Files Changed
+
+List the important files.
+
+## Database
+
+Explain:
+
+- how Drizzle is configured
+- whether Migration 001 was already applied
+- whether any schema changes were made
+
+## Verification
+
+Report the actual result of:
+
+```text
+typecheck
+lint
+build
+health check
+database connectivity
+Drizzle connectivity
+```
+
+## Issues / Decisions
+
+List anything that required a decision or could not safely be completed.
+
+## Next Recommended Task
+
+The next phase after this should be:
+
+```text
+Phase 2 — Authentication & Identity
+```
+
+Do not begin Phase 2 automatically.
+
+---
+
+# 32. Most Important Instruction
+
+Work conservatively.
+
+This is the foundation of a production messaging system.
+
+**Do not optimize for number of files changed. Optimize for a clean, deterministic, maintainable foundation.**
+
+Before modifying an existing component, inspect it.
+
+Before changing the database schema, verify whether the existing SQL migration already satisfies the requirement.
+
+Before adding an abstraction, determine whether the current architecture actually needs it.
+
+When uncertain, stop and explain the issue rather than making a speculative architectural decision.
+
+Proceed with **Phase 0 remaining work + Phase 1 Drizzle/database integration only**.

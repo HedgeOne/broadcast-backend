@@ -1,0 +1,402 @@
+Phase 13 — Push Notifications
+Mobile
+- [ ] Request notification permission
+- [ ] Generate push token
+- [ ] Register device
+- [ ] Handle foreground notifications
+- [ ] Handle background notifications
+- [ ] Handle notification tap
+Backend
+- [ ] Push notification service
+- [ ] FCM
+- [ ] APNs
+- [ ] Device token management
+- [ ] Notification batching
+- [ ] Invalid token cleanup
+Notification types
+new_message
+group_message
+mention
+broadcast_message
+
+Milestone: Messages can reach users even when the app is closed.
+Phase 14 — Presence & Typing
+These are ephemeral.
+Use Redis, not PostgreSQL.
+Presence
+- [ ] Online
+- [ ] Offline
+- [ ] Last seen
+- [ ] Heartbeats
+- [ ] TTL
+- [ ] Multi-device aggregation
+Example:
+Alice
+ ├── Device A → online
+ └── Device B → online
+
+Alice = online
+
+If both disconnect:
+Alice = offline
+
+Typing
+- [ ] typing.start
+- [ ] typing.stop
+- [ ] Redis TTL
+- [ ] WebSocket broadcast
+Do not persist typing events.
+Milestone: Presence and typing feel realtime.
+Phase 15 — Advanced Message Features
+Implement:
+Reactions
+- [ ] Add reaction
+- [ ] Change reaction
+- [ ] Remove reaction
+- [ ] Realtime reaction event
+Replies
+- [ ] Reply metadata
+- [ ] Reply preview
+- [ ] Navigate to original
+Forwarding
+- [ ] Select message
+- [ ] Select chats
+- [ ] Forward
+- [ ] Preserve appropriate metadata
+Editing
+- [ ] Edit text
+- [ ] Edited indicator
+- [ ] Realtime update
+Deletion
+- [ ] Delete for self
+- [ ] Delete for everyone
+- [ ] Permission/time policy
+Starred
+- [ ] Star
+- [ ] Unstar
+- [ ] Starred messages screen
+Pinned
+- [ ] Pin
+- [ ] Unpin
+- [ ] Pinned message list
+Mentions
+- [ ] Mention parsing
+- [ ] Mention UI
+- [ ] Notification
+Milestone: Core messaging feature set is complete.
+Phase 16 — Privacy & Account
+Privacy
+- [ ] Last seen
+- [ ] Online status
+- [ ] Read receipts
+- [ ] Typing indicators
+- [ ] Group invitations
+Blocking
+- [ ] Block
+- [ ] Unblock
+- [ ] Blocked users
+- [ ] Enforce block server-side
+Reporting
+- [ ] Report user
+- [ ] Report message
+- [ ] Abuse metadata
+Disappearing messages
+- [ ] Per-chat duration
+- [ ] Message expiry
+- [ ] Cleanup worker
+- [ ] Client behavior
+Account
+- [ ] Logout
+- [ ] Logout device
+- [ ] Logout all devices
+- [ ] Delete account
+- [ ] Data cleanup/anonymization strategy
+Milestone: Privacy and account lifecycle are production-ready.
+Phase 17 — End-to-End Encryption
+This should come relatively late because the rest of the messaging infrastructure needs to be stable first.
+Cryptographic foundation
+- [ ] Device identity keys
+- [ ] Signed prekeys
+- [ ] One-time prekeys
+- [ ] Key upload
+- [ ] Key rotation
+- [ ] Key verification
+Sessions
+- [ ] Device-to-device sessions
+- [ ] Session establishment
+- [ ] Session recovery
+- [ ] Session rotation
+Messaging
+plaintext
+   ↓
+E2EE library
+   ↓
+ciphertext
+   ↓
+server
+   ↓
+ciphertext
+   ↓
+recipient
+   ↓
+E2EE library
+   ↓
+plaintext
+
+Multi-device E2EE
+Handle:
+Alice Device A
+Alice Device B
+       ↕
+Bob Device A
+Bob Device B
+
+Group E2EE
+Use an appropriate established group-encryption mechanism/library.
+Critical rule
+Do NOT write:
+custom encryption algorithm
+custom key exchange
+custom cryptographic primitives
+
+Use mature, audited implementations.
+Milestone: Server cannot read message contents.
+Phase 18 — Search
+Because messages are E2EE:
+Server-side plaintext search is not appropriate.
+Use local search.
+SQLite
+- [ ] FTS5
+- [ ] Index decrypted local messages
+- [ ] Search messages
+- [ ] Search chats
+- [ ] Search users
+Search UI
+Search
+ ├── Messages
+ ├── People
+ └── Chats
+
+Milestone: Fast local message search.
+Phase 19 — Testing & Security
+This phase should actually begin much earlier, but this is the major hardening stage.
+Unit tests
+Test:
+- Authentication
+- Authorization
+- Message service
+- Chat service
+- Group service
+- Broadcast service
+- Sync logic
+- Idempotency
+- Sequence generation
+Integration tests
+Test:
+Mobile/API
+     ↓
+PostgreSQL
+     ↓
+Redis
+
+E2E tests
+Test complete flows:
+Direct messaging
+Register
+→ Login
+→ Create chat
+→ Send message
+→ Receive message
+→ Read message
+
+Groups
+Create
+→ Add members
+→ Message
+→ Admin actions
+
+Broadcast
+Create list
+→ Add recipients
+→ Send broadcast
+→ Recipient receives
+→ Recipient reads
+
+Offline
+Disconnect
+→ Send
+→ Reconnect
+→ Synchronize
+
+Multi-device
+Device A
+→ send
+
+Device B
+→ receive
+
+Security
+- [ ] Rate limits
+- [ ] JWT security
+- [ ] Refresh-token security
+- [ ] SQL injection protection
+- [ ] Input validation
+- [ ] Authorization audits
+- [ ] File upload validation
+- [ ] S3 access control
+- [ ] Secrets management
+- [ ] Abuse protection
+- [ ] Account takeover protections
+Phase 20 — Performance & Scaling
+Only after functionality is correct.
+PostgreSQL
+Analyze:
+- [ ] Slow queries
+- [ ] Missing indexes
+- [ ] Query plans
+- [ ] Connection pool
+- [ ] Large message tables
+- [ ] Partitioning requirements
+Redis
+- [ ] Memory usage
+- [ ] TTL policies
+- [ ] Connection limits
+- [ ] Pub/sub behavior
+WebSockets
+- [ ] Connection scaling
+- [ ] Redis-based routing
+- [ ] Reconnection storms
+- [ ] Backpressure
+Backend
+- [ ] Horizontal scaling
+- [ ] Stateless API servers
+- [ ] Worker scaling
+- [ ] Queue throughput
+
+Phase 21 — AWS Staging
+Only after local development is stable.
+AWS
+│
+├── ECS Fargate
+│     └── Backend
+│
+├── RDS PostgreSQL
+│
+├── ElastiCache Redis
+│
+├── S3
+│
+├── CloudFront
+│
+├── SQS
+│
+├── ALB
+│
+└── CloudWatch
+
+Implement:
+- [ ] AWS networking
+- [ ] VPC
+- [ ] Private subnets
+- [ ] Public subnets
+- [ ] Security groups
+- [ ] RDS
+- [ ] Redis
+- [ ] ECS
+- [ ] ALB
+- [ ] S3
+- [ ] CloudFront
+- [ ] SQS
+- [ ] Secrets Manager
+- [ ] CloudWatch
+- [ ] Backups
+- [ ] Monitoring
+Phase 22 — Production
+Infrastructure
+- [ ] Production AWS environment
+- [ ] Domain
+- [ ] TLS
+- [ ] DNS
+- [ ] CDN
+- [ ] Autoscaling
+- [ ] Database backups
+- [ ] Disaster recovery
+Deployment
+GitHub
+   ↓
+CI
+   ↓
+Tests
+   ↓
+Build
+   ↓
+Docker image
+   ↓
+ECR
+   ↓
+ECS
+
+Observability
+- [ ] Application logs
+- [ ] Metrics
+- [ ] Error tracking
+- [ ] Database monitoring
+- [ ] Redis monitoring
+- [ ] WebSocket metrics
+- [ ] Queue metrics
+- [ ] Alerts
+Production readiness
+- [ ] Load testing
+- [ ] Failure testing
+- [ ] Backup restore testing
+- [ ] Security review
+- [ ] Privacy review
+- [ ] App Store build
+- [ ] Play Store build
+Recommended Development Order
+I would not give Cursor the entire roadmap and tell it to implement everything. That will produce a large amount of coupled code and make debugging difficult.
+Instead, we should work in these concrete milestones:
+Milestone	Deliverable
+M0	Foundation cleanup
+M1	Drizzle + DB
+M2	Auth + OTP
+M3	Users + devices
+M4	Direct chat
+M5	Text messaging
+M6	WebSocket realtime
+M7	Offline sync
+M8	Delivery/read reliability
+M9	Groups
+M10	Broadcast Lists
+M11	Media
+M12	Voice messages
+M13	Push notifications
+M14	Presence + typing
+M15	Advanced messages
+M16	Privacy + account
+M17	E2EE
+M18	Search
+M19	Testing/security
+M20	Performance
+M21	AWS staging
+M22	Production
+
+
+The first implementation milestone should be M1: Drizzle + Database.
+At the end of M1, we should have:
+React Native app
+       │
+       │
+       ▼
+Fastify backend
+       │
+       ▼
+Drizzle ORM
+       │
+       ▼
+PostgreSQL 17
+       │
+       └── Migration 001
+
+Then M2 can build authentication on top of a stable database layer.
+This order keeps the system incremental and gives us a clean testable checkpoint after every major subsystem.
