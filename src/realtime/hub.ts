@@ -8,6 +8,7 @@ const CHANNEL_PREFIX = "rt:user:";
 
 export interface RealtimePublisher {
   publish(userId: string, event: RealtimeEvent): Promise<void>;
+  publishMany(userIds: readonly string[], event: RealtimeEvent): Promise<void>;
 }
 
 // Fans events out to every socket a user has open, across server instances:
@@ -71,6 +72,25 @@ export class RealtimeHub implements RealtimePublisher {
         "realtime publish failed; delivering locally",
       );
       this.deliverLocal(userId, payload);
+    }
+  }
+
+  // One pipelined round trip for a group's members.
+  async publishMany(userIds: readonly string[], event: RealtimeEvent): Promise<void> {
+    const unique = [...new Set(userIds)];
+    if (unique.length === 0) return;
+    const payload = JSON.stringify(event);
+    try {
+      const pipeline = this.redis.pipeline();
+      for (const userId of unique) pipeline.publish(`${CHANNEL_PREFIX}${userId}`, payload);
+      const results = await pipeline.exec();
+      if (results?.some(([error]) => error)) throw new Error("pipelined publish failed");
+    } catch (error) {
+      this.log.warn(
+        { err: error instanceof Error ? error.message : error },
+        "realtime publish failed; delivering locally",
+      );
+      for (const userId of unique) this.deliverLocal(userId, payload);
     }
   }
 

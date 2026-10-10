@@ -7,7 +7,6 @@ import {
   broadcastLists,
   chatMembers,
   chats,
-  groupMembers,
   groups,
   users,
 } from "../schema/index.js";
@@ -89,11 +88,6 @@ async function seed(): Promise<void> {
       await tx.insert(groups).values({ chatId: groupChat.id, name: SEED_GROUP_NAME });
       await tx.insert(chatMembers).values([
         { chatId: groupChat.id, userId: alice, role: "owner" },
-        { chatId: groupChat.id, userId: bob },
-        { chatId: groupChat.id, userId: charlie },
-      ]);
-      await tx.insert(groupMembers).values([
-        { chatId: groupChat.id, userId: alice },
         { chatId: groupChat.id, userId: bob },
         { chatId: groupChat.id, userId: charlie },
       ]);

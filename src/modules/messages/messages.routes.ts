@@ -1,7 +1,12 @@
 import type { FastifyPluginCallback } from "fastify";
 
 import { chatParams } from "../chats/chats.schemas.js";
-import { listMessagesQuery, sendMessageBody } from "./messages.schemas.js";
+import {
+  listMessagesQuery,
+  messageParams,
+  reactionBody,
+  sendMessageBody,
+} from "./messages.schemas.js";
 import type { MessagesService } from "./messages.service.js";
 
 export interface MessagesRoutesOptions {
@@ -27,6 +32,23 @@ export const messagesRoutes: FastifyPluginCallback<MessagesRoutesOptions> = (
     const body = sendMessageBody.parse(request.body);
     const result = await service.send(request.auth, chatId, body);
     return reply.code(result.created ? 201 : 200).send({ message: result.message });
+  });
+
+  // Idempotent: deleting a deleted message returns the tombstone.
+  app.delete("/:chatId/messages/:messageId", async (request) => {
+    const { chatId, messageId } = messageParams.parse(request.params);
+    return { message: await service.delete(request.auth.userId, chatId, messageId) };
+  });
+
+  app.put("/:chatId/messages/:messageId/reaction", async (request) => {
+    const { chatId, messageId } = messageParams.parse(request.params);
+    const { emoji } = reactionBody.parse(request.body);
+    return service.react(request.auth.userId, chatId, messageId, emoji);
+  });
+
+  app.delete("/:chatId/messages/:messageId/reaction", async (request) => {
+    const { chatId, messageId } = messageParams.parse(request.params);
+    return service.react(request.auth.userId, chatId, messageId, null);
   });
 
   done();

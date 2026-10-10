@@ -4,6 +4,7 @@ import {
   check,
   foreignKey,
   index,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -52,9 +53,13 @@ export const messages = pgTable(
 
     replyToMessageId: uuid("reply_to_message_id"),
 
+    // Server-generated payload of a 'system' message (group events).
+    systemEvent: jsonb("system_event").$type<Record<string, unknown>>(),
+
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     editedAt: timestamptz("edited_at"),
     deletedAt: timestamptz("deleted_at"),
+    deletedBy: uuid("deleted_by"),
     expiresAt: timestamptz("expires_at"),
   },
   (t) => [
@@ -78,8 +83,17 @@ export const messages = pgTable(
       columns: [t.replyToMessageId],
       foreignColumns: [t.id],
     }).onDelete("set null"),
+    foreignKey({
+      name: "messages_deleted_by_fkey",
+      columns: [t.deletedBy],
+      foreignColumns: [users.id],
+    }).onDelete("set null"),
 
     check("messages_sequence_check", sql`${t.sequence} > 0`),
+    check(
+      "messages_system_event_check",
+      sql`(${t.type} = 'system') = (${t.systemEvent} IS NOT NULL)`,
+    ),
 
     uniqueIndex("messages_chat_sequence_unique").on(t.chatId, t.sequence),
     uniqueIndex("messages_sender_client_id_unique")
@@ -118,7 +132,34 @@ export const messageReactions = pgTable(
       foreignColumns: [users.id],
     }).onDelete("cascade"),
 
+    check("message_reactions_emoji_length", sql`char_length(${t.emoji}) BETWEEN 1 AND 16`),
+
     index("message_reactions_message_idx").on(t.messageId),
+  ],
+);
+
+// Mentioned members, validated against active membership on send.
+export const messageMentions = pgTable(
+  "message_mentions",
+  {
+    messageId: uuid("message_id").notNull(),
+    userId: uuid("user_id").notNull(),
+  },
+  (t) => [
+    primaryKey({ name: "message_mentions_pkey", columns: [t.messageId, t.userId] }),
+
+    foreignKey({
+      name: "message_mentions_message_id_fkey",
+      columns: [t.messageId],
+      foreignColumns: [messages.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "message_mentions_user_id_fkey",
+      columns: [t.userId],
+      foreignColumns: [users.id],
+    }).onDelete("cascade"),
+
+    index("message_mentions_user_idx").on(t.userId),
   ],
 );
 

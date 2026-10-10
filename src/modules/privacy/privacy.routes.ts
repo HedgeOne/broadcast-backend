@@ -40,10 +40,25 @@ export const privacyRoutes: FastifyPluginCallback<PrivacyRoutesOptions> = (
 
   app.post("/reports", async (request, reply) => {
     const body = reportBody.parse(request.body);
-    if (body.userId === request.auth.userId) throw cannotTargetSelf();
-    if (!(await repository.userExists(body.userId))) throw chatErrors.userNotFound();
-    if (body.chatId && !(await repository.isChatMember(request.auth.userId, body.chatId))) {
+    const reporterId = request.auth.userId;
+    if (body.chatId && !(await repository.isChatMember(reporterId, body.chatId))) {
       throw chatErrors.chatNotFound();
+    }
+    let userId = body.userId ?? null;
+    if (body.chatId && body.messageId) {
+      const sender = await repository.reportableMessageSender(
+        reporterId,
+        body.chatId,
+        body.messageId,
+      );
+      if (!sender) throw chatErrors.messageNotFound();
+      if (userId && userId !== sender) throw chatErrors.messageNotFound();
+      userId = sender;
+    }
+    if (userId === reporterId) throw cannotTargetSelf();
+    if (userId && !(await repository.userExists(userId))) throw chatErrors.userNotFound();
+    if (body.block && !userId) {
+      throw new AppError(400, "INVALID_TARGET", "Choose a person to block.");
     }
 
     const limit = await rateLimiter.consume(
@@ -57,7 +72,13 @@ export const privacyRoutes: FastifyPluginCallback<PrivacyRoutesOptions> = (
       });
     }
 
-    await repository.report(request.auth.userId, body);
+    await repository.report(reporterId, {
+      userId,
+      chatId: body.chatId ?? null,
+      messageId: body.messageId ?? null,
+      reason: body.reason,
+      block: body.block,
+    });
     return reply.code(201).send({ reported: true, blocked: body.block });
   });
 

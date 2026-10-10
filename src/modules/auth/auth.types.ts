@@ -32,7 +32,7 @@ export interface AuthTokens {
 
 export interface PublicUser {
   id: string;
-  email: string | null;
+  phoneNumber: string; // E.164; only ever returned to its owner
   displayName: string | null;
   username: string | null;
   dateOfBirth: string | null; // YYYY-MM-DD
@@ -47,7 +47,7 @@ export interface PublicDevice {
 export function toPublicUser(user: User): PublicUser {
   return {
     id: user.id,
-    email: user.email,
+    phoneNumber: user.phoneNumber,
     displayName: user.displayName,
     username: user.username,
     dateOfBirth: user.dateOfBirth,

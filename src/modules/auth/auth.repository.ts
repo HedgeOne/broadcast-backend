@@ -3,7 +3,6 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { Database } from "../../db/client.js";
 import { devices, sessions, users, type Device, type User } from "../../db/schema/index.js";
 import type { DeviceInfo } from "./auth.types.js";
-import type { Identifier } from "./identifiers.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Executor = Database | Transaction;
@@ -36,39 +35,24 @@ export class AuthRepository {
 
   // ---- Users --------------------------------------------------------------
 
-  // Called only after the provider has proven ownership of `identifier`, so
-  // the matching *_verified_at column is stamped for new and existing users.
-  async findOrCreateVerifiedUser(
-    identifier: Identifier,
-  ): Promise<{ user: User; created: boolean }> {
-    const isEmail = identifier.type === "email";
-    const target = isEmail ? users.email : users.phoneNumber;
-    const verifiedAt = isEmail ? users.emailVerifiedAt : users.phoneNumberVerifiedAt;
-    const values = isEmail
-      ? { email: identifier.value, emailVerifiedAt: sql`now()` }
-      : { phoneNumber: identifier.value, phoneNumberVerifiedAt: sql`now()` };
-
+  // Called only after the OTP provider has proven ownership of `phoneNumber`
+  // (E.164). The unique index makes concurrent first sign-ins for the same
+  // number converge on one row: the loser's insert is a no-op and it reads
+  // the winner's row once that transaction commits.
+  async findOrCreateVerifiedUser(phoneNumber: string): Promise<{ user: User; created: boolean }> {
     const [created] = await this.db
       .insert(users)
-      .values(values)
-      .onConflictDoNothing({ target })
+      .values({ phoneNumber, phoneNumberVerifiedAt: sql`now()` })
+      .onConflictDoNothing({ target: users.phoneNumber })
       .returning();
 
     if (created) {
       return { user: created, created: true };
     }
 
-    const [existing] = await this.db
-      .update(users)
-      .set(
-        isEmail
-          ? { emailVerifiedAt: sql`coalesce(${verifiedAt}, now())` }
-          : { phoneNumberVerifiedAt: sql`coalesce(${verifiedAt}, now())` },
-      )
-      .where(eq(target, identifier.value))
-      .returning();
+    const [existing] = await this.db.select().from(users).where(eq(users.phoneNumber, phoneNumber));
     if (!existing) {
-      throw new Error("User vanished between insert conflict and update");
+      throw new Error("User vanished between insert conflict and select");
     }
 
     return { user: existing, created: false };

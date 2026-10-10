@@ -5,20 +5,25 @@ import fp from "fastify-plugin";
 import { config } from "../../config/index.js";
 import { db } from "../../db/client.js";
 import { redisRateLimiter, type RateLimiter } from "../../lib/rate-limiter.js";
-import { redisReplayGuard, type ReplayGuard } from "../../lib/replay-guard.js";
+import { redis } from "../../redis/client.js";
 import { authErrors } from "./auth.errors.js";
 import { AuthRepository } from "./auth.repository.js";
 import { authRoutes } from "./auth.routes.js";
 import { AuthService } from "./auth.service.js";
 import type { AccessTokenClaims, AuthContext } from "./auth.types.js";
-import { createIdentityVerifier, type IdentityVerifier } from "./verification/index.js";
+import {
+  createMobileOtpProvider,
+  RedisChallengeStore,
+  type ChallengeStore,
+  type MobileOtpProvider,
+} from "./otp/index.js";
 
 export type { AuthContext } from "./auth.types.js";
 
 export interface AuthModuleOptions {
-  identityVerifier?: IdentityVerifier;
+  otpProvider?: MobileOtpProvider;
+  challengeStore?: ChallengeStore;
   rateLimiter?: RateLimiter;
-  replayGuard?: ReplayGuard;
 }
 
 function isAccessTokenClaims(value: unknown): value is AccessTokenClaims {
@@ -42,9 +47,9 @@ export const authModule = fp<AuthModuleOptions>(
 
     const service = new AuthService({
       repository: new AuthRepository(db),
-      identityVerifier: options.identityVerifier ?? createIdentityVerifier(),
+      otpProvider: options.otpProvider ?? createMobileOtpProvider(),
+      challengeStore: options.challengeStore ?? new RedisChallengeStore(redis),
       rateLimiter: options.rateLimiter ?? redisRateLimiter,
-      replayGuard: options.replayGuard ?? redisReplayGuard,
       signAccessToken: (claims) => app.jwt.sign(claims),
       settings: config.auth,
       log: app.log,

@@ -8,7 +8,8 @@ import { config } from "./config/index.js";
 import { registerErrorHandling } from "./lib/error-handler.js";
 import { logger } from "./lib/logger.js";
 import { authModule, type AuthModuleOptions } from "./modules/auth/index.js";
-import { chatsModule } from "./modules/chats/index.js";
+import { chatsModule, type ChatsModuleOptions } from "./modules/chats/index.js";
+import { contactsModule, type ContactsModuleOptions } from "./modules/contacts/index.js";
 import { privacyModule } from "./modules/privacy/index.js";
 import { usersModule } from "./modules/users/index.js";
 import { realtimeModule } from "./realtime/index.js";
@@ -16,6 +17,8 @@ import { healthRoutes } from "./routes/health.js";
 
 export interface BuildAppOptions {
   auth?: AuthModuleOptions;
+  contacts?: ContactsModuleOptions;
+  chats?: ChatsModuleOptions;
   logger?: FastifyBaseLogger | undefined;
 }
 
@@ -52,7 +55,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(authModule, options.auth ?? {});
   await app.register(realtimeModule);
   await app.register(usersModule);
-  await app.register(chatsModule);
+  await app.register(contactsModule, options.contacts ?? {});
+  await app.register(chatsModule, options.chats ?? {});
   await app.register(privacyModule);
 
   return app;

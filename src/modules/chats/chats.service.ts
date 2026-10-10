@@ -59,9 +59,11 @@ export class ChatsService {
     chatId: string,
     update: { deliveredSequence?: number | undefined; readSequence?: number | undefined },
   ): Promise<Receipts> {
-    const membership = await this.repository.findDirectMembership(userId, chatId);
+    const membership = await this.repository.findMembership(userId, chatId);
     if (!membership) throw chatErrors.chatNotFound();
 
+    const before =
+      membership.type === "group" ? await this.repository.groupReceipts(chatId) : undefined;
     const result = await this.repository.advanceReceipts(
       userId,
       chatId,
@@ -69,9 +71,30 @@ export class ChatsService {
       update.readSequence ?? 0,
     );
     if (!result) throw chatErrors.chatNotFound();
+    const receipts = {
+      deliveredSequence: result.deliveredSequence,
+      readSequence: result.readSequence,
+    };
+    if (!result.changed) return receipts;
 
-    if (result.changed) {
-      const visible = await this.repository.readReceiptsVisible(userId, membership.peerId);
+    if (before) {
+      await this.realtime.publish(userId, { type: "receipt.updated", chatId, userId, ...receipts });
+      // Senders' ticks only move when the slowest member catches up.
+      const after = await this.repository.groupReceipts(chatId);
+      if (after.delivered !== before.delivered || after.read !== before.read) {
+        await this.realtime.publishMany(await this.repository.activeMemberIds(chatId), {
+          type: "receipts.aggregate",
+          chatId,
+          deliveredSequence: after.delivered,
+          readSequence: after.read,
+        });
+      }
+      return receipts;
+    }
+
+    const peerId = membership.peerId;
+    if (peerId) {
+      const visible = await this.repository.readReceiptsVisible(userId, peerId);
       const event = {
         type: "receipt.updated" as const,
         chatId,
@@ -79,7 +102,7 @@ export class ChatsService {
         deliveredSequence: result.deliveredSequence,
       };
       await Promise.all([
-        this.realtime.publish(membership.peerId, {
+        this.realtime.publish(peerId, {
           ...event,
           readSequence: visible ? result.readSequence : null,
         }),
@@ -88,6 +111,6 @@ export class ChatsService {
       ]);
     }
 
-    return { deliveredSequence: result.deliveredSequence, readSequence: result.readSequence };
+    return receipts;
   }
 }

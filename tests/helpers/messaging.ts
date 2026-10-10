@@ -1,37 +1,28 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import type { LightMyRequestResponse } from "fastify";
 import type { WebSocket } from "ws";
 
 import { pool } from "../../src/db/client.js";
-import { bearer, login, type LoginResult, type TestContext } from "./auth.js";
+import { bearer, login, testPhone, type LoginResult, type TestContext } from "./auth.js";
 
 export interface TestUser extends LoginResult {
-  phone?: string;
+  phone: string;
 }
 
+// Signs a user in through the phone OTP flow, then names them.
 export async function createUser(
   ctx: TestContext,
-  email: string,
-  options: { displayName?: string; phone?: string; phoneVerified?: boolean } = {},
+  name: string,
+  options: { displayName?: string; phone?: string } = {},
 ): Promise<TestUser> {
-  const session = await login(ctx, email);
-  await pool.query(
-    `UPDATE users SET display_name = $2, phone_number = $3,
-       phone_number_verified_at = CASE WHEN $4::boolean THEN NOW() END
-     WHERE id = $1`,
-    [
-      session.user.id,
-      options.displayName ?? email.split("@")[0],
-      options.phone ?? null,
-      options.phoneVerified ?? options.phone !== undefined,
-    ],
-  );
-  return { ...session, ...(options.phone ? { phone: options.phone } : {}) };
-}
-
-export function phoneHash(phone: string): string {
-  return createHash("sha256").update(phone).digest("hex");
+  const phone = options.phone ?? testPhone();
+  const session = await login(ctx, phone);
+  await pool.query("UPDATE users SET display_name = $2 WHERE id = $1", [
+    session.user.id,
+    options.displayName ?? name,
+  ]);
+  return { ...session, phone };
 }
 
 export function encodeText(text: string): string {
@@ -41,7 +32,7 @@ export function encodeText(text: string): string {
 export function api(
   ctx: TestContext,
   user: TestUser,
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   url: string,
   payload?: Record<string, unknown>,
 ): Promise<LightMyRequestResponse> {

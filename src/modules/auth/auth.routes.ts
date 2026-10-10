@@ -1,6 +1,6 @@
 import type { FastifyPluginCallback } from "fastify";
 
-import { emailVerifyBody, refreshBody } from "./auth.schemas.js";
+import { phoneResendBody, phoneStartBody, phoneVerifyBody, refreshBody } from "./auth.schemas.js";
 import type { AuthService } from "./auth.service.js";
 
 export interface AuthRoutesOptions {
@@ -8,11 +8,26 @@ export interface AuthRoutesOptions {
 }
 
 export const authRoutes: FastifyPluginCallback<AuthRoutesOptions> = (app, { service }, done) => {
-  // The client has already verified the OTP with the MSG91 widget and sends
-  // the widget's access token; MSG91 is asked server-side which email it proves.
-  app.post("/email/verify", async (request) => {
-    const body = emailVerifyBody.parse(request.body);
-    const result = await service.verifyEmail(body.accessToken, body.device, request.ip);
+  // The backend sends the OTP through MSG91 and keeps the provider's request
+  // id; the client only receives an opaque challenge id.
+  app.post("/phone/start", async (request) => {
+    const body = phoneStartBody.parse(request.body);
+    return service.startPhoneSignIn(body.phoneNumber, request.ip);
+  });
+
+  app.post("/phone/resend", async (request) => {
+    const body = phoneResendBody.parse(request.body);
+    return service.resendPhoneCode(body.challengeId, request.ip);
+  });
+
+  app.post("/phone/verify", async (request) => {
+    const body = phoneVerifyBody.parse(request.body);
+    const result = await service.verifyPhoneCode(
+      body.challengeId,
+      body.code,
+      body.device,
+      request.ip,
+    );
 
     return {
       ...result.tokens,

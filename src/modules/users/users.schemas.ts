@@ -82,16 +82,6 @@ export function updateMeBody(now?: () => Date) {
     });
 }
 
-export const MAX_DISCOVERY_HASHES = 1000;
-
-// SHA-256 (hex) of E.164 phone numbers normalised on the device.
-export const discoverBody = z.object({
-  phoneHashes: z
-    .array(z.string().regex(/^[0-9a-f]{64}$/, "Expected a lowercase hex SHA-256 hash."))
-    .min(1)
-    .max(MAX_DISCOVERY_HASHES),
-});
-
 export const userParams = z.object({ userId: z.uuid() });
 
 export type UpdateMeBody = z.infer<ReturnType<typeof updateMeBody>>;

@@ -36,6 +36,9 @@ export const chats = pgTable(
     directUserAId: uuid("direct_user_a_id"),
     directUserBId: uuid("direct_user_b_id"),
 
+    // Client-generated key making creation idempotent per creator.
+    clientRequestId: uuid("client_request_id"),
+
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
 
@@ -75,6 +78,9 @@ export const chats = pgTable(
         sql`GREATEST(${t.directUserAId}, ${t.directUserBId})`,
       )
       .where(sql`${t.type} = 'direct'`),
+    uniqueIndex("chats_creator_request_unique")
+      .on(t.createdBy, t.clientRequestId)
+      .where(sql`${t.clientRequestId} IS NOT NULL`),
   ],
 );
 
@@ -87,7 +93,12 @@ export const chatMembers = pgTable(
     role: chatMemberRole("role").notNull().default("member"),
 
     joinedAt: timestamptz("joined_at").notNull().defaultNow(),
+    // Set when the member left or was removed (then removed_by is set).
     leftAt: timestamptz("left_at"),
+    removedBy: uuid("removed_by"),
+
+    // Messages at or below this sequence are hidden from the member.
+    historyFromSequence: bigint("history_from_sequence", { mode: "number" }).notNull().default(0),
 
     lastDeliveredSequence: bigint("last_delivered_sequence", { mode: "number" })
       .notNull()
@@ -111,7 +122,13 @@ export const chatMembers = pgTable(
       columns: [t.userId],
       foreignColumns: [users.id],
     }).onDelete("cascade"),
+    foreignKey({
+      name: "chat_members_removed_by_fkey",
+      columns: [t.removedBy],
+      foreignColumns: [users.id],
+    }).onDelete("set null"),
 
+    check("chat_members_history_check", sql`${t.historyFromSequence} >= 0`),
     check(
       "chat_members_sequence_check",
       sql`${t.lastDeliveredSequence} >= 0 AND ${t.lastReadSequence} >= 0 AND ${t.lastReadSequence} <= ${t.lastDeliveredSequence}`,
@@ -126,6 +143,12 @@ export const chatMembers = pgTable(
       .on(t.userId, t.chatId)
       .where(sql`${t.leftAt} IS NULL`),
     index("chat_members_user_recent_idx").on(t.userId, t.joinedAt.desc().nullsFirst()),
+    uniqueIndex("chat_members_one_owner")
+      .on(t.chatId)
+      .where(sql`${t.role} = 'owner' AND ${t.leftAt} IS NULL`),
+    index("chat_members_chat_active_idx")
+      .on(t.chatId)
+      .where(sql`${t.leftAt} IS NULL`),
   ],
 );
 

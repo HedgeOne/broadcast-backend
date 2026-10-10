@@ -30,18 +30,44 @@ export class PrivacyRepository {
     return result.rows.length > 0;
   }
 
-  async report(reporterId: string, body: ReportBody): Promise<void> {
+  // The sender of a message the reporter can see (sent after they joined),
+  // excluding system events.
+  async reportableMessageSender(
+    userId: string,
+    chatId: string,
+    messageId: string,
+  ): Promise<string | undefined> {
+    const result = await this.db.execute<{ sender_id: string }>(sql`
+      SELECT m.sender_id FROM messages m
+      JOIN chat_members me ON me.chat_id = m.chat_id AND me.user_id = ${userId}
+      WHERE m.id = ${messageId} AND m.chat_id = ${chatId}
+        AND m.type <> 'system' AND m.sequence > me.history_from_sequence
+    `);
+    return result.rows[0]?.sender_id;
+  }
+
+  async report(
+    reporterId: string,
+    report: {
+      userId: string | null;
+      chatId: string | null;
+      messageId: string | null;
+      reason: ReportBody["reason"];
+      block: boolean;
+    },
+  ): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.insert(userReports).values({
         reporterId,
-        reportedUserId: body.userId,
-        chatId: body.chatId ?? null,
-        reason: body.reason,
+        reportedUserId: report.userId,
+        chatId: report.chatId,
+        messageId: report.messageId,
+        reason: report.reason,
       });
-      if (body.block) {
+      if (report.block && report.userId) {
         await tx
           .insert(blockedUsers)
-          .values({ userId: reporterId, blockedUserId: body.userId })
+          .values({ userId: reporterId, blockedUserId: report.userId })
           .onConflictDoNothing();
       }
     });

@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { chats } from "./chats.js";
+import { messages } from "./messages.js";
 import { timestamptz } from "./types.js";
 import { users } from "./users.js";
 
@@ -137,14 +138,16 @@ export const userReportReason = pgEnum("user_report_reason", [
   "other",
 ]);
 
-// Abuse reports. Message content is never attached (bodies are ciphertext).
+// Abuse reports about a user, a group, or both. Message content is never
+// attached (bodies are ciphertext); message_id only points at the message.
 export const userReports = pgTable(
   "user_reports",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     reporterId: uuid("reporter_id").notNull(),
-    reportedUserId: uuid("reported_user_id").notNull(),
+    reportedUserId: uuid("reported_user_id"),
     chatId: uuid("chat_id"),
+    messageId: uuid("message_id"),
     reason: userReportReason("reason").notNull(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
@@ -164,8 +167,17 @@ export const userReports = pgTable(
       columns: [t.chatId],
       foreignColumns: [chats.id],
     }).onDelete("set null"),
+    foreignKey({
+      name: "user_reports_message_id_fkey",
+      columns: [t.messageId],
+      foreignColumns: [messages.id],
+    }).onDelete("set null"),
 
     check("user_reports_self_check", sql`${t.reporterId} <> ${t.reportedUserId}`),
+    check(
+      "user_reports_target_check",
+      sql`${t.reportedUserId} IS NOT NULL OR ${t.chatId} IS NOT NULL`,
+    ),
 
     index("user_reports_reported_user_idx").on(t.reportedUserId, t.createdAt.desc().nullsFirst()),
   ],

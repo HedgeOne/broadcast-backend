@@ -36,6 +36,27 @@
       "when": 1791368791630,
       "tag": "0004_direct_messaging",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791529217564,
+      "tag": "0005_phone_authentication",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791542170000,
+      "tag": "0006_contact_matching",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791619911869,
+      "tag": "0007_groups",
+      "breakpoints": true
     }
   ]
 }

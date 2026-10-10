@@ -24,23 +24,51 @@ const envSchema = z.object({
   AUTH_ACCESS_TOKEN_TTL_SECONDS: positiveInt.default(900),
   AUTH_REFRESH_TOKEN_TTL_SECONDS: positiveInt.default(60 * 60 * 24 * 30),
 
-  // Rate limits for /auth/email/verify (fixed windows, Redis-backed).
-  // OTP send/resend/attempt limits are configured on the MSG91 widget.
-  AUTH_VERIFY_WINDOW_SECONDS: positiveInt.default(900),
-  AUTH_VERIFY_IP_LIMIT: positiveInt.default(30),
-  AUTH_VERIFY_IDENTIFIER_LIMIT: positiveInt.default(15),
+  // Phone OTP challenges (Redis). MSG91 generates codes of this length that
+  // expire with the challenge; its expiry is set in whole minutes.
+  AUTH_OTP_CODE_LENGTH: z.coerce.number().int().min(4).max(9).default(6),
+  AUTH_OTP_TTL_SECONDS: positiveInt
+    .max(10_080 * 60)
+    .refine((seconds) => seconds % 60 === 0, "must be a whole number of minutes")
+    .default(900),
+  AUTH_OTP_MAX_ATTEMPTS: positiveInt.default(5),
+  AUTH_OTP_RESEND_COOLDOWN_SECONDS: positiveInt.default(30),
+  // MSG91 allows at most 2 retries per code.
+  AUTH_OTP_MAX_RESENDS: z.coerce.number().int().min(0).max(2).default(2),
 
-  // MSG91 (backend only). The auth key verifies widget access tokens and must
-  // never reach the mobile app.
+  // Fixed-window rate limits (Redis) for the phone OTP endpoints. "Send"
+  // covers start and resend.
+  AUTH_OTP_RATE_WINDOW_SECONDS: positiveInt.default(3600),
+  AUTH_OTP_SEND_IP_LIMIT: positiveInt.default(30),
+  AUTH_OTP_SEND_PHONE_LIMIT: positiveInt.default(8),
+  AUTH_OTP_VERIFY_IP_LIMIT: positiveInt.default(60),
+  AUTH_OTP_VERIFY_PHONE_LIMIT: positiveInt.default(15),
+
+  // Contact matching (POST /contacts/match). Numbers are processed in
+  // memory only; these bound how much of the number space one account or
+  // address can probe per window.
+  CONTACTS_MATCH_MAX_BATCH: z.coerce.number().int().min(1).max(1000).default(500),
+  CONTACTS_MATCH_WINDOW_SECONDS: positiveInt.default(3600),
+  CONTACTS_MATCH_USER_REQUEST_LIMIT: positiveInt.default(60),
+  CONTACTS_MATCH_IP_REQUEST_LIMIT: positiveInt.default(60),
+  CONTACTS_MATCH_USER_NUMBER_LIMIT: positiveInt.default(20000),
+  CONTACTS_MATCH_QUERY_TIMEOUT_MS: positiveInt.default(3000),
+
+  // Including the owner.
+  GROUP_MAX_MEMBERS: z.coerce.number().int().min(2).max(1024).default(256),
+
+  // MSG91 SendOTP V5 API, called only from the backend. None of these may
+  // reach the mobile app.
   MSG91_API_BASE_URL: z.url().default("https://control.msg91.com"),
   MSG91_AUTH_KEY: required,
+  MSG91_OTP_TEMPLATE_ID: required,
   MSG91_TIMEOUT_MS: positiveInt.default(10_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
 
-function loadEnv(): Env {
-  const result = envSchema.safeParse(process.env);
+export function parseEnv(source: Record<string, string | undefined>): Env {
+  const result = envSchema.safeParse(source);
 
   if (!result.success) {
     // Only variable names and messages are printed; values may be secrets.
@@ -54,4 +82,4 @@ function loadEnv(): Env {
   return result.data;
 }
 
-export const env = loadEnv();
+export const env = parseEnv(process.env);

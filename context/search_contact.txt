@@ -1,0 +1,451 @@
+# Cursor Task: Implement Production-Ready Contact Discovery and Direct Chat Creation in Broadcast
+
+## Objective
+
+Implement the end-to-end Contact Discovery module for Broadcast, allowing an authenticated user to:
+
+1. Grant permission to access their device contacts.
+2. Sync contact phone numbers for matching against registered Broadcast users.
+3. Search contacts using a search bar.
+4. Identify which contacts already use Broadcast.
+5. Tap a registered contact to open an existing direct chat or create a new one.
+6. See an Invite action for contacts who are not registered, with the invitation feature remaining a placeholder for now.
+
+This must be a real implementation integrated with the existing backend, database, authentication, navigation, and design system.
+
+Do not build a standalone mock screen or use hardcoded users.
+
+## 1. Inspect the existing implementation first
+
+Audit both repositories before changing files.
+
+### Mobile frontend
+`broadcast/`
+
+Inspect:
+
+- Expo SDK version and React Native version.
+- Expo Router structure.
+- Existing Chats tab and its New Chat action.
+- Authentication/session state.
+- API client, error handling, and authorization headers.
+- Existing local SQLite or other caching infrastructure.
+- Shared design-system documentation, theme tokens, and reusable UI components.
+- Existing loading, error, empty-state, and offline-state conventions.
+- App lifecycle handling and logout behavior.
+
+### Backend
+`broadcast-backend/`
+
+Inspect:
+
+- Fastify server and route registration.
+- Existing authentication middleware and active-user checks.
+- PostgreSQL schema, migration history, and query conventions.
+- User phone-number normalization and uniqueness constraints.
+- `users.phone_number` and `users.phone_number_verified_at`.
+- Existing `chats`, `chat_members`, `blocked_users`, and direct-chat uniqueness constraints.
+- Any existing user lookup, contact, or direct-chat service.
+- Existing tests, rate-limiting configuration, and error-handling conventions.
+
+Do not assume that the schema, routes, or interfaces match this prompt exactly. Adapt the implementation to the actual codebase.
+
+Do not rewrite the initial database migration or rebuild existing authentication and messaging infrastructure.
+
+## 2. User experience and navigation
+
+Integrate contact discovery with the existing Chats tab and its New Chat action.
+
+Implement the following states and screens as appropriate to the existing navigation architecture:
+
+### A. Contact permission introduction
+
+When contact access has not been granted, explain briefly why Broadcast needs it:
+
+- Find people already using Broadcast.
+- Start conversations without manually entering their numbers.
+- Contact information is used for matching and is not permanently uploaded as an address book.
+
+Provide:
+- A primary `Sync Contacts` action.
+- A secondary option to continue without syncing.
+- A clear explanation if the user declines access.
+
+Do not repeatedly prompt after denial.
+
+### B. Native permission flow
+
+Use `expo-contacts`, installed at a version compatible with the existing Expo SDK.
+
+Before requesting permission:
+
+1. Check the current permission status.
+2. Request permission only when appropriate.
+3. Handle granted, denied, restricted, and limited access.
+4. Handle iOS limited contact access where supported.
+5. Provide an Open Settings action if permission was previously denied and system settings are needed.
+
+Configure the native permission descriptions correctly through the existing Expo app configuration. Do not introduce unnecessary contact-write permissions if the app only needs read access; verify and configure the minimum permissions required by the installed library and native build.
+
+Ensure the feature works in development and production builds. If a new native module requires a rebuild, document that requirement.
+
+### C. New Chat / Contact Discovery screen
+
+Build a clean, production-quality screen consistent with Broadcast's existing design language.
+
+The screen should contain:
+
+- Header and back navigation.
+- Search field.
+- Contact synchronization status where appropriate.
+- Alphabetically sorted contact rows.
+- Contact display name from the local address book.
+- Registered Broadcast user's avatar and display name when available.
+- A clear distinction between registered and unregistered contacts.
+- Loading, refreshing, empty, error, and offline states.
+- A manual Sync/Refresh action.
+
+For registered contacts, show a recognizable chat action or the normal selectable row.
+
+For unregistered contacts, show an `Invite` action.
+
+**Invite is a placeholder only.** Do not send SMS, open a share sheet, send an invitation, or implement an invitation backend. Display a small, consistent notice such as `Invitations coming soon` when the user taps it.
+
+Do not use demo contacts, fake avatars, fabricated timestamps, fake match counts, or placeholder API responses.
+
+### D. Search behavior
+
+Search locally across the device contacts already retrieved and normalized.
+
+Search should support:
+
+- Contact display names.
+- Normalized phone numbers.
+- Multiple phone numbers belonging to one contact.
+- Case-insensitive name matching.
+- Contacts with multiple name components.
+
+Do not call the backend on every keystroke.
+
+Keep search responsive for large address books. Avoid unnecessary re-renders and repeated normalization.
+
+If a contact has multiple phone numbers, determine whether any number matches a registered Broadcast account. Do not display duplicate rows for the same contact unnecessarily.
+
+### E. Contact selection
+
+If the contact matches a registered, eligible Broadcast user:
+
+1. Call the backend direct-chat open/create endpoint.
+2. Show a loading state and prevent duplicate taps.
+3. Receive the canonical chat ID and required conversation metadata.
+4. Navigate into the existing direct-chat screen if implemented.
+5. If the conversation screen is not yet available, navigate to the existing supported route or implement only the minimum route integration necessary without fabricating a conversation.
+
+Do not create chat records directly from the mobile app.
+
+If the contact is not registered, show the invitation placeholder.
+
+## 3. Local contact processing
+
+Create a well-separated contact service or equivalent using the project's existing architecture.
+
+Responsibilities:
+
+- Read only the contact fields needed for discovery.
+- Extract display name and phone numbers.
+- Normalize phone numbers with `libphonenumber-js` or the existing phone-number utility.
+- Use an appropriate country context for local numbers.
+- Convert valid numbers to E.164.
+- Reject invalid or ambiguous numbers instead of guessing.
+- Deduplicate normalized numbers before backend matching.
+- Preserve a mapping between each normalized number and its originating local contact.
+- Support multiple numbers per contact.
+- Exclude the current user's own phone number from displayed discovery results.
+- Handle contacts without names or phone numbers gracefully.
+
+Keep contact display names and local contact IDs on the device. Do not send contact names, emails, addresses, birthdays, or other unrelated fields to the backend.
+
+Do not assume the user's device locale always indicates the correct country code.
+
+## 4. Backend contact matching API
+
+Implement a protected endpoint consistent with existing route conventions. A suggested route is:
+
+`POST /contacts/match`
+
+Suggested request:
+
+- An array of normalized E.164 phone numbers.
+
+Suggested response:
+
+- Only the requested phone numbers that correspond to eligible registered Broadcast users.
+- The matching user's internal ID.
+- Only permitted public-profile fields, such as display name, username, and avatar.
+- No sensitive authentication information.
+
+Adapt the contract to the existing API conventions and validate it with the project's schema library.
+
+### Required behavior
+
+1. Require an authenticated, active user.
+2. Validate all submitted numbers on the server.
+3. Require canonical E.164 format or normalize using the established server-side utility.
+4. Deduplicate requests.
+5. Enforce a configurable maximum batch size.
+6. Use parameterized SQL and indexed lookups against canonical `users.phone_number`.
+7. Return only users with verified phone numbers and eligible account status, consistent with the existing account lifecycle.
+8. Exclude the requesting user.
+9. Apply blocking and privacy rules consistently with the existing messaging implementation.
+10. Return a stable response structure, including an empty result when there are no matches.
+11. Do not expose whether a particular number belongs to a disabled, deleted, or otherwise ineligible account.
+12. Do not create users, chats, or contact database records as a side effect of matching.
+
+If the existing database already has the necessary phone-number index and unique constraint, reuse them. Do not introduce redundant migrations.
+
+### Performance
+
+The endpoint must support batched matching rather than one query per number.
+
+- Use parameterized queries with bounded input size.
+- Avoid unbounded `IN` clauses or unbounded request bodies.
+- Avoid sequential per-number database calls.
+- Set appropriate request and database timeouts.
+- Return only the fields the client needs.
+
+Inspect query plans if necessary and add an index only if the current schema does not support efficient lookups.
+
+## 5. Privacy and abuse protection
+
+Contact matching is a sensitive user-discovery operation.
+
+Implement:
+
+- Authentication and active-account checks.
+- Per-user and per-IP rate limiting using the existing infrastructure.
+- Maximum batch sizes and payload validation.
+- Request timeouts and safe failure behavior.
+- Minimal request/response logging.
+- No persistent server-side storage of uploaded address books.
+- No contact names or raw phone-number lists in logs, analytics, or error reports.
+- No contact matching through an unauthenticated endpoint.
+- No unbounded number enumeration.
+- Consistent handling of blocked users.
+- No disclosure of private profile fields or account status.
+
+Use HTTPS in deployed environments.
+
+Do not claim that ordinary phone-number hashing provides secure contact discovery. Do not implement a homemade cryptographic matching protocol.
+
+For this initial version, send only the necessary normalized phone numbers through the authenticated API and process them transiently. Document the privacy limitations and rate-limiting controls.
+
+Do not implement background contact uploads or silent periodic synchronization.
+
+## 6. Contact sync, cache, and refresh lifecycle
+
+Reuse existing local storage infrastructure where possible.
+
+Requirements:
+
+- Store only the minimum data required for efficient display and search.
+- Keep the device's contact names and local contact identifiers on the device.
+- Cache match results only as needed, with a documented refresh strategy.
+- Do not introduce a new database solely for contacts if an existing local cache is adequate.
+- Do not persist the full address book on the backend.
+- Refresh when the user explicitly requests it or when the existing lifecycle requires revalidation.
+- Prevent overlapping sync requests.
+- Handle partial failures and allow retry.
+- Handle a user revoking permission.
+- Invalidate or clear contact-derived cached data when permission is revoked.
+- Clear user-specific cached matches on logout or account switch.
+- Avoid syncing again when nothing has changed and a valid cache can be reused.
+
+If contact matching is chunked into multiple requests, handle partial success and retry safely without duplicating results.
+
+Do not request contact access in the background without an explicit, user-understandable action.
+
+## 7. Open or create a direct chat
+
+Implement or reuse an authenticated backend operation, such as:
+
+`POST /chats/direct/open`
+
+The request should identify the intended registered user using their canonical internal user ID.
+
+The backend must:
+
+1. Authenticate the requester.
+2. Validate that the target exists and is eligible.
+3. Reject self-chat if unsupported by the existing product.
+4. Enforce the existing blocking and privacy rules.
+5. Find the existing direct conversation using the current canonical pair of user IDs.
+6. Return that conversation if it already exists.
+7. Otherwise create the direct chat and both required `chat_members` records in a database transaction.
+8. Handle concurrent requests without creating duplicate conversations.
+9. Respect the existing unique direct-chat constraint.
+10. Return the canonical chat ID and the minimum metadata needed by the client.
+
+Do not trust a client-provided chat ID or arbitrary profile information.
+
+Do not bypass the existing direct-chat creation service or duplicate its business logic in a new module.
+
+Do not create a conversation for an unregistered phone number.
+
+Ensure the endpoint is compatible with the current direct-chat schema, message sequence strategy, and authorization model.
+
+## 8. Frontend integration and shared design system
+
+The current Chats tab contains a New Chat action and an empty state. Integrate contact discovery into this existing flow.
+
+Use the established Broadcast design system as the single source of truth:
+
+- Shared color tokens.
+- Typography tokens.
+- Spacing and radius tokens.
+- Reusable buttons, inputs, rows, avatars, loading indicators, and empty states.
+- Existing safe-area behavior.
+- Existing navigation conventions.
+
+Do not hardcode new colors, font sizes, spacing values, or layout dimensions when shared tokens already exist.
+
+Do not introduce a separate design system or recreate existing components.
+
+Support responsive layouts across typical phone sizes and respect iOS and Android safe areas.
+
+Add accessibility labels, reasonable touch targets, keyboard-safe search, and appropriate loading/disabled states.
+
+## 9. Error handling and edge cases
+
+Handle at least:
+
+- Permission denied.
+- iOS limited contact access.
+- Contacts permission revoked in system settings.
+- Empty address book.
+- Contacts without phone numbers.
+- Invalid or ambiguous phone numbers.
+- Multiple numbers for one contact.
+- Duplicate phone numbers across contacts.
+- No registered contacts.
+- Partial match API failure.
+- Offline mode.
+- Backend timeout.
+- Authentication/session expiration.
+- Rate limiting.
+- User blocked by or blocking the target user.
+- Target account disabled or deleted.
+- Double tap while opening a chat.
+- Concurrent direct-chat creation.
+- Contact list changed since the previous sync.
+- Logout or account switch during sync.
+
+Never replace a failed request with fabricated data.
+
+## 10. Tests
+
+### Frontend tests
+
+Test:
+
+- Permission states and permission request flow.
+- Contact parsing and E.164 normalization.
+- Invalid-number handling.
+- Duplicate-number handling.
+- Multiple numbers per contact.
+- Local search by name and number.
+- Matched and unmatched row rendering.
+- Invite placeholder behavior.
+- Loading, empty, error, and offline states.
+- Refresh behavior and duplicate request prevention.
+- Permission revocation and cache invalidation.
+- Navigation after successful chat creation.
+
+### Backend tests
+
+Test:
+
+- Authentication required for contact matching.
+- Valid and invalid phone numbers.
+- Batch-size limits.
+- Duplicate numbers in one request.
+- Matching verified, eligible users only.
+- Excluding self.
+- Excluding or handling blocked users according to the established policy.
+- No account-status enumeration.
+- No persistence of uploaded address books.
+- Rate limiting.
+- Parameterized, bounded matching queries.
+- Direct-chat reuse.
+- Direct-chat creation.
+- Concurrent requests producing one canonical direct chat.
+- Rejection of invalid or ineligible targets.
+- Session expiration and authorization failures.
+
+Mock device contacts and external dependencies in automated tests. Do not require a real device address book or production database in the default unit-test suite.
+
+## 11. Verification
+
+After implementation:
+
+1. Run tests for both repositories.
+2. Run TypeScript type checks.
+3. Run linting.
+4. Run the existing frontend and backend build commands.
+5. Inspect the migration diff, if any.
+6. Search for accidental contact logging or persistence.
+7. Confirm that the app does not upload unrelated contact fields.
+8. Verify that no fake users, hardcoded phone numbers, or demo contact lists are used.
+9. Verify that no message pinning functionality has been introduced.
+10. Document any native rebuild required by the Expo contacts module.
+
+Do not claim that device permission flows work on physical iOS/Android devices unless they were actually tested there.
+
+## 12. Execution strategy
+
+Work in stages:
+
+1. Audit existing code and report the relevant files, services, routes, and schema.
+2. Propose the minimal implementation plan.
+3. Implement native contact permission and local contact processing.
+4. Implement the authenticated contact-matching endpoint.
+5. Implement the New Chat UI, local search, and matched/unmatched states.
+6. Integrate idempotent direct-chat opening/creation.
+7. Add privacy protections, error handling, and tests.
+8. Run all relevant verification commands.
+9. Provide a final report.
+
+Do not rewrite applied database migrations, perform destructive database operations, or refactor unrelated authentication or messaging code.
+
+## Acceptance criteria
+
+The implementation is complete when:
+
+- The user can explicitly grant or decline contact access.
+- Authorized local contacts can be read and searched.
+- Numbers are normalized and deduplicated correctly.
+- Registered eligible users are identified through the real backend.
+- Unregistered contacts display an Invite placeholder that performs no external action.
+- Tapping a registered user opens an existing direct chat or creates one safely.
+- Repeated taps do not create duplicate chats.
+- Contact names and unrelated address-book fields are not sent to the backend.
+- The server does not persist uploaded address books.
+- Rate limits, authorization checks, and blocking rules are enforced.
+- Permission denial, revocation, offline operation, and empty states are handled.
+- All screens use Broadcast's existing shared design system.
+- Tests and build checks pass, or outstanding failures are documented accurately.
+
+## Final report
+
+Provide:
+
+1. Files changed, grouped by frontend, backend, and database.
+2. Permission and contact-sync implementation.
+3. Phone normalization and matching behavior.
+4. API contracts and rate limits.
+5. Direct-chat creation and concurrency behavior.
+6. Privacy and data-retention behavior.
+7. Tests and actual results.
+8. Any native rebuild or manual setup requirements.
+9. Known limitations and follow-up work.
+
+Begin with the audit and implement the module end-to-end. Do not stop after building the UI.

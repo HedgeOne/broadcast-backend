@@ -2,7 +2,10 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 
 import type { Database } from "../../db/client.js";
 import { blockedUsers, chatMembers, users, type User } from "../../db/schema/index.js";
+import type { GroupRole } from "../groups/groups.policy.js";
+import type { SystemEvent } from "../groups/groups.types.js";
 import type { MessageDto } from "../messages/messages.types.js";
+import { activeMemberIds, type Executor } from "./chat-tx.js";
 import type { ChatSummary } from "./chats.types.js";
 
 // The far-future timestamp stored for "muted until unmuted".
@@ -16,16 +19,29 @@ function isoTimestamp(column: SQL): SQL {
 
 interface SummaryRow extends Record<string, unknown> {
   id: string;
+  type: "direct" | "group";
   created_at: string;
   my_read: string;
+  my_role: GroupRole;
   muted: boolean;
-  peer_id: string;
+  peer_id: string | null;
   peer_name: string | null;
-  peer_status: User["status"];
-  peer_delivered: string;
-  peer_read: string;
+  peer_status: User["status"] | null;
+  peer_delivered: string | null;
+  peer_read: string | null;
   receipts_visible: boolean;
   blocked_by_me: boolean;
+  g_name: string | null;
+  g_description: string | null;
+  g_edit_info: boolean | null;
+  g_message: boolean | null;
+  g_add_members: boolean | null;
+  g_approval: boolean | null;
+  g_links: boolean | null;
+  g_history: boolean | null;
+  g_member_count: string | null;
+  g_min_delivered: string | null;
+  g_min_read: string | null;
   unread: string;
   last_sequence: string;
   m_id: string | null;
@@ -34,53 +50,101 @@ interface SummaryRow extends Record<string, unknown> {
   m_sequence: string | null;
   m_type: MessageDto["type"] | null;
   m_ciphertext: Buffer | null;
+  m_system: SystemEvent | null;
+  m_deleted: boolean | null;
+  m_deleted_by: string | null;
+  m_mentions: string[] | null;
   m_created_at: string | null;
+  m_sender_name: string | null;
+}
+
+function lastMessageOf(row: SummaryRow): MessageDto | null {
+  if (!row.m_id || !row.m_sender_id || !row.m_client_id || !row.m_type || !row.m_created_at) {
+    return null;
+  }
+  const deleted = row.m_deleted === true;
+  return {
+    id: row.m_id,
+    chatId: row.id,
+    senderId: row.m_sender_id,
+    clientMessageId: row.m_client_id,
+    sequence: Number(row.m_sequence),
+    type: row.m_type,
+    ciphertext: deleted || !row.m_ciphertext ? "" : row.m_ciphertext.toString("base64"),
+    createdAt: row.m_created_at,
+    // Previews don't render quotes or reactions.
+    replyTo: null,
+    mentions: deleted ? [] : (row.m_mentions ?? []),
+    reactions: [],
+    system: row.m_system,
+    deleted,
+    deletedBy: row.m_deleted_by,
+  };
 }
 
 function toSummary(row: SummaryRow): ChatSummary {
-  const lastMessage: MessageDto | null =
-    row.m_id &&
-    row.m_sender_id &&
-    row.m_client_id &&
-    row.m_type &&
-    row.m_ciphertext &&
-    row.m_created_at
-      ? {
-          id: row.m_id,
-          chatId: row.id,
-          senderId: row.m_sender_id,
-          clientMessageId: row.m_client_id,
-          sequence: Number(row.m_sequence),
-          type: row.m_type,
-          ciphertext: row.m_ciphertext.toString("base64"),
-          createdAt: row.m_created_at,
-        }
-      : null;
+  const lastSequence = Number(row.last_sequence);
+  const base = {
+    id: row.id,
+    lastMessage: lastMessageOf(row),
+    lastSenderName: row.m_sender_name,
+    lastSequence,
+    unreadCount: Number(row.unread),
+    muted: row.muted,
+    lastReadSequence: Number(row.my_read),
+    createdAt: row.created_at,
+    lastActivityAt: row.m_created_at ?? row.created_at,
+  };
+
+  if (row.type === "group") {
+    return {
+      ...base,
+      type: "group",
+      group: {
+        name: row.g_name ?? "",
+        description: row.g_description,
+        avatarUrl: null,
+        memberCount: Number(row.g_member_count ?? 1),
+        myRole: row.my_role,
+        settings: {
+          onlyAdminsCanEditInfo: row.g_edit_info ?? false,
+          onlyAdminsCanMessage: row.g_message ?? false,
+          onlyAdminsCanAddMembers: row.g_add_members ?? true,
+          approvalRequired: row.g_approval ?? false,
+          inviteLinksEnabled: row.g_links ?? false,
+          historyVisibleToNewMembers: row.g_history ?? false,
+        },
+      },
+      // Alone in the group: nobody else to deliver to.
+      peerDeliveredSequence:
+        row.g_min_delivered === null ? lastSequence : Number(row.g_min_delivered),
+      peerReadSequence: row.g_min_read === null ? lastSequence : Number(row.g_min_read),
+    };
+  }
 
   return {
-    id: row.id,
+    ...base,
     type: "direct",
     peer: {
-      id: row.peer_id,
+      id: row.peer_id ?? "",
       displayName: row.peer_name,
       available: row.peer_status === "active",
       blockedByMe: row.blocked_by_me,
     },
-    lastMessage,
-    lastSequence: Number(row.last_sequence),
-    unreadCount: Number(row.unread),
-    muted: row.muted,
-    lastReadSequence: Number(row.my_read),
-    peerDeliveredSequence: Number(row.peer_delivered),
-    peerReadSequence: row.receipts_visible ? Number(row.peer_read) : null,
-    createdAt: row.created_at,
-    lastActivityAt: row.m_created_at ?? row.created_at,
+    peerDeliveredSequence: Number(row.peer_delivered ?? 0),
+    peerReadSequence: row.receipts_visible ? Number(row.peer_read ?? 0) : null,
   };
 }
 
-export interface DirectChatMembership {
+// The caller's active membership in any chat.
+export interface ChatMembership {
   chatId: string;
-  peerId: string;
+  type: "direct" | "group";
+  role: GroupRole;
+  // Group messages at or below this sequence predate the caller.
+  historyFrom: number;
+  // Direct chats only.
+  peerId: string | null;
 }
 
 export interface ReceiptUpdate {
@@ -92,9 +156,10 @@ export interface ReceiptUpdate {
 export class ChatsRepository {
   constructor(private readonly db: Database) {}
 
-  // Direct chats only (groups arrive in a later batch). `includeEmpty`
-  // returns chats with no messages yet; the list omits them so a recipient
-  // never sees a conversation someone merely opened.
+  // Direct chats and live groups the caller is an active member of.
+  // `includeEmpty` returns direct chats with no messages yet; the list
+  // omits them so a recipient never sees a conversation someone merely
+  // opened. Groups always have at least their "created" event.
   private async summaries(
     userId: string,
     options: { chatId?: string; includeEmpty: boolean },
@@ -102,8 +167,10 @@ export class ChatsRepository {
     const result = await this.db.execute<SummaryRow>(sql`
       SELECT
         c.id,
+        c.type,
         ${isoTimestamp(sql`c.created_at`)} AS created_at,
         me.last_read_sequence AS my_read,
+        me.role AS my_role,
         (me.muted_until IS NOT NULL AND me.muted_until > NOW()) AS muted,
         peer.user_id AS peer_id,
         pu.display_name AS peer_name,
@@ -112,15 +179,27 @@ export class ChatsRepository {
         peer.last_read_sequence AS peer_read,
         (COALESCE(pp.show_read_receipts, TRUE) AND COALESCE(mp.show_read_receipts, TRUE))
           AS receipts_visible,
-        EXISTS (
+        (peer.user_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM blocked_users b
           WHERE b.user_id = me.user_id AND b.blocked_user_id = peer.user_id
-        ) AS blocked_by_me,
+        )) AS blocked_by_me,
+        g.name AS g_name,
+        g.description AS g_description,
+        g.only_admins_can_edit_info AS g_edit_info,
+        g.only_admins_can_message AS g_message,
+        g.only_admins_can_add_members AS g_add_members,
+        g.approval_required AS g_approval,
+        g.invite_links_enabled AS g_links,
+        g.history_visible_to_new_members AS g_history,
+        gm.member_count AS g_member_count,
+        gm.min_delivered AS g_min_delivered,
+        gm.min_read AS g_min_read,
         (
           SELECT COUNT(*) FROM messages um
           WHERE um.chat_id = c.id
-            AND um.sequence > me.last_read_sequence
+            AND um.sequence > GREATEST(me.last_read_sequence, me.history_from_sequence)
             AND um.sender_id <> me.user_id
+            AND um.type <> 'system'
             AND um.deleted_at IS NULL
         ) AS unread,
         COALESCE(lm.sequence, 0) AS last_sequence,
@@ -130,24 +209,46 @@ export class ChatsRepository {
         lm.sequence AS m_sequence,
         lm.type AS m_type,
         lm.ciphertext AS m_ciphertext,
-        ${isoTimestamp(sql`lm.created_at`)} AS m_created_at
+        lm.system_event AS m_system,
+        (lm.deleted_at IS NOT NULL) AS m_deleted,
+        lm.deleted_by AS m_deleted_by,
+        (
+          SELECT array_agg(mm.user_id::text) FROM message_mentions mm WHERE mm.message_id = lm.id
+        ) AS m_mentions,
+        ${isoTimestamp(sql`lm.created_at`)} AS m_created_at,
+        lsu.display_name AS m_sender_name
       FROM chat_members me
-      JOIN chats c ON c.id = me.chat_id AND c.type = 'direct'
-      JOIN chat_members peer ON peer.chat_id = c.id AND peer.user_id <> me.user_id
-      JOIN users pu ON pu.id = peer.user_id
+      JOIN chats c ON c.id = me.chat_id
+      LEFT JOIN groups g ON g.chat_id = c.id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS member_count,
+               MIN(o.last_delivered_sequence) FILTER (WHERE o.user_id <> me.user_id) AS min_delivered,
+               MIN(o.last_read_sequence) FILTER (WHERE o.user_id <> me.user_id) AS min_read
+        FROM chat_members o
+        WHERE o.chat_id = c.id AND o.left_at IS NULL AND c.type = 'group'
+      ) gm ON TRUE
+      LEFT JOIN chat_members peer
+        ON c.type = 'direct' AND peer.chat_id = c.id AND peer.user_id <> me.user_id
+      LEFT JOIN users pu ON pu.id = peer.user_id
       LEFT JOIN privacy_settings pp ON pp.user_id = peer.user_id
       LEFT JOIN privacy_settings mp ON mp.user_id = me.user_id
       LEFT JOIN LATERAL (
-        SELECT m.id, m.sender_id, m.client_message_id, m.sequence, m.type, m.ciphertext, m.created_at
+        SELECT m.id, m.sender_id, m.client_message_id, m.sequence, m.type, m.ciphertext,
+               m.system_event, m.deleted_at, m.deleted_by, m.created_at
         FROM messages m
-        WHERE m.chat_id = c.id AND m.deleted_at IS NULL
+        WHERE m.chat_id = c.id AND m.sequence > me.history_from_sequence
         ORDER BY m.sequence DESC
         LIMIT 1
       ) lm ON TRUE
+      LEFT JOIN users lsu ON lsu.id = lm.sender_id
       WHERE me.user_id = ${userId}
         AND me.left_at IS NULL
+        AND (
+          (c.type = 'direct' AND peer.user_id IS NOT NULL)
+          OR (c.type = 'group' AND g.chat_id IS NOT NULL AND g.deleted_at IS NULL)
+        )
         ${options.chatId ? sql`AND c.id = ${options.chatId}` : sql``}
-        ${options.includeEmpty ? sql`` : sql`AND lm.id IS NOT NULL`}
+        ${options.includeEmpty ? sql`` : sql`AND (lm.id IS NOT NULL OR c.type = 'group')`}
       ORDER BY COALESCE(lm.created_at, c.created_at) DESC, c.id
     `);
     return result.rows.map(toSummary);
@@ -232,20 +333,51 @@ export class ChatsRepository {
     });
   }
 
-  // The caller's active direct-chat membership and the other participant.
-  async findDirectMembership(
+  // The caller's active membership; undefined for non-members and deleted
+  // groups. Pass a transaction to re-check under the chat lock.
+  async findMembership(
     userId: string,
     chatId: string,
-  ): Promise<DirectChatMembership | undefined> {
-    const result = await this.db.execute<{ peer_id: string }>(sql`
-      SELECT peer.user_id AS peer_id
+    executor: Executor = this.db,
+  ): Promise<ChatMembership | undefined> {
+    const result = await executor.execute<{
+      type: "direct" | "group";
+      role: GroupRole;
+      history_from: string;
+      peer_id: string | null;
+    }>(sql`
+      SELECT c.type, me.role, me.history_from_sequence AS history_from,
+        (SELECT p.user_id FROM chat_members p
+         WHERE c.type = 'direct' AND p.chat_id = c.id AND p.user_id <> me.user_id) AS peer_id
       FROM chat_members me
-      JOIN chats c ON c.id = me.chat_id AND c.type = 'direct'
-      JOIN chat_members peer ON peer.chat_id = c.id AND peer.user_id <> me.user_id
+      JOIN chats c ON c.id = me.chat_id
+      LEFT JOIN groups g ON g.chat_id = c.id
       WHERE me.chat_id = ${chatId} AND me.user_id = ${userId} AND me.left_at IS NULL
+        AND (c.type = 'direct' OR (g.chat_id IS NOT NULL AND g.deleted_at IS NULL))
     `);
     const row = result.rows[0];
-    return row ? { chatId, peerId: row.peer_id } : undefined;
+    if (!row || (row.type === "direct" && !row.peer_id)) return undefined;
+    return {
+      chatId,
+      type: row.type,
+      role: row.role,
+      historyFrom: Number(row.history_from),
+      peerId: row.peer_id,
+    };
+  }
+
+  // How far every active member of a group has received and read.
+  async groupReceipts(chatId: string): Promise<{ delivered: number; read: number }> {
+    const result = await this.db.execute<{ delivered: string | null; read: string | null }>(sql`
+      SELECT MIN(last_delivered_sequence) AS delivered, MIN(last_read_sequence) AS read
+      FROM chat_members WHERE chat_id = ${chatId} AND left_at IS NULL
+    `);
+    const row = result.rows[0];
+    return { delivered: Number(row?.delivered ?? 0), read: Number(row?.read ?? 0) };
+  }
+
+  activeMemberIds(chatId: string): Promise<string[]> {
+    return activeMemberIds(this.db, chatId);
   }
 
   async setMuted(userId: string, chatId: string, muted: boolean): Promise<boolean> {

@@ -1,0 +1,230 @@
+# Task: Replace MSG91 OTP Widget REST Integration with Classic MSG91 V5 OTP API
+
+## Objective
+
+The Broadcast application currently uses MSG91's OTP Widget REST API from the backend. Replace that integration with MSG91's **classic V5 OTP API for server-to-server mobile OTP authentication**.
+
+Official references:
+
+- Classic OTP API overview: https://docs.msg91.com/otp
+- MSG91 OTP API examples: https://msg91.com/help/sendotp/how-to-integrate-the-new-login-with-otp-widget
+- DLT template mapping: https://msg91.com/help/dlt-registration-in-india/map-sms-content-template-on-msg91-api-panel
+- OTP template configuration: https://msg91.com/help/sendotp/where-to-find-the-sendotp-api-how-to-get-template-id
+
+Important: The second link is the OTP Widget guide, not the classic V5 API reference. Use it only to understand the existing widget setup. For the new implementation, use the classic V5 API documentation and confirm every endpoint, HTTP method, header, parameter, and response schema against the official V5 API reference.
+
+## 1. Audit the existing implementation
+
+Before changing anything, inspect both repositories:
+
+- `broadcast/`
+- `broadcast-backend/`
+
+Locate and review:
+
+- `Msg91MobileOtpProvider` or its equivalent.
+- The current widget endpoints: `sendOtpMobile`, `retryOtp`, `verifyOtp`, and `verifyAccessToken`.
+- Authentication routes:
+  - `/auth/phone/start`
+  - `/auth/phone/resend`
+  - `/auth/phone/verify`
+- Redis challenge storage and expiration.
+- Phone-number normalization.
+- Rate limits and OTP attempt limits.
+- User creation and lookup by canonical E.164 phone number.
+- Session/token issuance and revocation.
+- Existing tests and MSG91 environment variables.
+
+Write down the current provider interface and preserve it wherever possible.
+
+Do not begin by rewriting the authentication system.
+
+## 2. Implement the classic V5 endpoints
+
+Use the following documented endpoint paths as the intended integration:
+
+### Send OTP
+
+`POST https://control.msg91.com/api/v5/otp`
+
+Use the configured OTP template ID and normalized mobile number. Configure the request using the official V5 API's required parameters, headers, and JSON body.
+
+### Verify OTP
+
+`GET https://control.msg91.com/api/v5/otp/verify`
+
+Pass the mobile number and submitted OTP according to the official V5 API contract.
+
+### Resend OTP
+
+`GET https://control.msg91.com/api/v5/otp/retry`
+
+Use the documented mobile-number and retry-channel parameters. Configure text/SMS resend rather than voice unless the product explicitly supports voice.
+
+**Do not guess the request format.** Verify the exact requirements from the official API reference before implementation. In particular, verify whether `authkey` belongs in a header or query parameter, which send parameters are mandatory, the accepted retry-channel values, and the exact success and error response schemas.
+
+Do not use:
+
+- `/api/v5/widget/...`
+- `sendOtpMobile`
+- `verifyAccessToken`
+- Widget JWT access-token verification
+- Legacy endpoints such as `sendotp.php` or `verifyRequestOTP.php`
+
+The new integration must use the classic V5 API, not a mixture of the two products.
+
+## 3. Use the configured SMS template
+
+The account already has a sender ID and SMS template configured in MSG91.
+
+Inspect the current configuration and identify the approved OTP template ID required by the classic V5 API.
+
+Use environment variables with names consistent with the existing project. If needed, use:
+
+- `MSG91_AUTH_KEY`
+- `MSG91_OTP_TEMPLATE_ID`
+
+Do not assume the existing widget's `MSG91_WIDGET_ID` or `MSG91_TOKEN_AUTH` is needed by the classic V5 API.
+
+Before live testing, confirm that:
+
+1. The OTP template exists in the MSG91 account.
+2. The template is approved and mapped for the classic V5 OTP API.
+3. Its sender ID and DLT template mapping are correct for Indian SMS delivery.
+4. The template's OTP placeholder and any required variables match MSG91's configuration.
+
+Do not create a new template or modify the approved sender ID without authorization.
+
+Keep all provider credentials exclusively on the backend.
+
+## 4. Preserve the existing provider interface
+
+Adapt the existing provider implementation rather than spreading MSG91-specific logic across the application.
+
+Preserve the existing methods and their signatures where practical, such as:
+
+- `sendOtp(phoneNumber)`
+- `resendOtp(challengeReference, phoneNumber)`
+- `verifyOtp(challengeReference, phoneNumber, otp)`
+
+The exact signatures may differ in the current codebase. Follow the existing interface instead of creating a parallel provider abstraction.
+
+The classic V5 API may not provide the same challenge reference as the widget. If so:
+
+- Keep the application's internal challenge ID separate from MSG91 identifiers.
+- Bind the internal challenge securely to the normalized mobile number and authentication attempt.
+- Store the necessary expiry, attempt count, and state in Redis.
+- Do not invent or fabricate a provider request ID.
+- Do not assume that a successful resend produces a new OTP; MSG91's documented V5 flow resends the same OTP for the same mobile number.
+
+Do not store the OTP in plaintext in Redis, logs, database records, or client storage.
+
+## 5. Authentication and security requirements
+
+Preserve the current application authentication contract:
+
+1. The mobile app requests OTP through the existing backend route.
+2. The backend calls MSG91 V5.
+3. The user submits the OTP through the existing verification route.
+4. The backend calls MSG91's V5 verification endpoint.
+5. The backend validates the provider response.
+6. Only after successful verification does the backend resolve or create the user and issue the existing application session.
+
+Implement or retain:
+
+- E.164 phone normalization.
+- Server-side OTP verification.
+- OTP expiration and attempt limits.
+- Resend cooldowns.
+- Per-number and per-IP rate limiting.
+- Replay and duplicate-request protections.
+- Idempotent account creation.
+- Safe provider timeout and error handling.
+- Generic, non-sensitive client-facing authentication errors.
+- No OTP, API key, or token logging.
+- No OTP bypass in production.
+
+A provider's HTTP 200 response must not automatically be interpreted as a successful OTP verification. Check the documented response fields and success indicators.
+
+If the provider's behavior is ambiguous, fail closed and report the uncertainty rather than authenticating the user.
+
+## 6. Preserve everything unrelated to the provider
+
+Do not unnecessarily change:
+
+- React Native screens or styling.
+- Authentication API routes and response contracts.
+- Database schema or migration history.
+- Phone-number identity and user lookup.
+- Onboarding flow.
+- JWT/session creation and refresh.
+- Device registration.
+- Redis challenge storage and rate limits.
+- Existing logout and session revocation behavior.
+
+The mobile app must continue communicating only with the Broadcast backend. Do not reintroduce the MSG91 SDK or expose provider credentials to the client.
+
+## 7. Environment configuration
+
+Update the backend `.env.example` with the exact required V5 variables and placeholder values.
+
+Remove widget-specific variables from active application configuration only after verifying that no remaining functionality uses them.
+
+Do not overwrite the actual `.env` file or remove unrelated database, Redis, or application settings.
+
+If the existing environment variables can be reused safely, avoid unnecessary renaming.
+
+## 8. Tests
+
+Use mocked provider responses for automated tests.
+
+Cover:
+
+- Successful OTP request.
+- Successful OTP verification.
+- Invalid and expired OTPs.
+- Successful resend.
+- Provider throttling and timeout.
+- Malformed or unexpected provider responses.
+- Missing template ID or auth key.
+- Duplicate submissions.
+- Rate limits and resend cooldowns.
+- Replayed verification requests.
+- Concurrent registration for the same phone number.
+- Session issuance only after successful verification.
+
+Ensure widget endpoints and `verifyAccessToken` are no longer used by the active authentication provider.
+
+Run the existing tests, TypeScript type checks, linting, and builds for both repositories.
+
+## 9. Controlled live integration test
+
+Provide a documented manual test procedure using a phone number controlled by the developer.
+
+Test the complete flow:
+
+1. Initiate OTP through Broadcast.
+2. Confirm MSG91 accepts the request.
+3. Confirm the SMS arrives using the configured sender ID and approved template.
+4. Enter an incorrect OTP and confirm authentication fails.
+5. Enter the correct OTP and confirm authentication succeeds.
+6. Test resend and expiration behavior.
+7. Confirm the backend creates or authenticates the correct user and issues a valid application session.
+
+Do not send real SMS messages as part of the ordinary automated test suite. Do not claim that live delivery was tested unless it actually was.
+
+## 10. Final report
+
+Report:
+
+1. The old widget endpoints removed from the active provider.
+2. The exact V5 endpoints, HTTP methods, headers, and request parameters implemented.
+3. The provider success and failure response fields used.
+4. The required environment variable names.
+5. The configured template mapping requirements.
+6. The files changed.
+7. Test, lint, type-check, and build results.
+8. The manual steps needed to verify live SMS delivery.
+9. Any remaining uncertainties or configuration blockers.
+
+Start with the audit, verify the official V5 API contract, and then implement the smallest safe change. Do not fabricate API behavior or claim success without evidence.

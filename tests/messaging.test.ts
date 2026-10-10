@@ -16,7 +16,6 @@ import {
   encodeText,
   nextEvent,
   openChat,
-  phoneHash,
   sendText,
   type TestUser,
 } from "./helpers/messaging.js";
@@ -53,8 +52,8 @@ describe("direct messaging", () => {
 
   beforeEach(async () => {
     await resetState();
-    ana = await createUser(ctx, "ana@example.com", { displayName: "Ana" });
-    ben = await createUser(ctx, "ben@example.com", { displayName: "Ben" });
+    ana = await createUser(ctx, "ana", { displayName: "Ana" });
+    ben = await createUser(ctx, "ben", { displayName: "Ben" });
   });
 
   afterAll(async () => {
@@ -78,7 +77,7 @@ describe("direct messaging", () => {
       ["GET", "/chats"],
       ["POST", "/chats/direct"],
       ["GET", `/chats/${randomUUID()}/messages`],
-      ["POST", "/users/discover"],
+      ["POST", "/contacts/match"],
       ["PUT", `/privacy/blocks/${randomUUID()}`],
     ] as const)("rejects %s %s without a session", async (method, url) => {
       const response = await ctx.app.inject({ method, url, payload: {} });
@@ -147,14 +146,14 @@ describe("direct messaging", () => {
 
     it("does not reveal a chat to non-members", async () => {
       const chatId = await openChat(ctx, ana, ben);
-      const eve = await createUser(ctx, "eve@example.com");
+      const eve = await createUser(ctx, "eve");
       expect((await api(ctx, eve, "GET", `/chats/${chatId}`)).statusCode).toBe(404);
       expect((await api(ctx, eve, "GET", `/chats/${chatId}/messages`)).statusCode).toBe(404);
       expect((await sendText(ctx, eve, chatId, "x")).statusCode).toBe(404);
     });
 
     it("orders the list by the latest message", async () => {
-      const cara = await createUser(ctx, "cara@example.com", { displayName: "Cara" });
+      const cara = await createUser(ctx, "cara", { displayName: "Cara" });
       const withBen = await openChat(ctx, ana, ben);
       const withCara = await openChat(ctx, ana, cara);
       await sendText(ctx, ana, withBen, "first");
@@ -223,7 +222,7 @@ describe("direct messaging", () => {
     });
 
     it("rejects reusing a client message ID in another chat", async () => {
-      const cara = await createUser(ctx, "cara@example.com");
+      const cara = await createUser(ctx, "cara");
       const withBen = await openChat(ctx, ana, ben);
       const withCara = await openChat(ctx, ana, cara);
       const clientMessageId = randomUUID();
@@ -436,7 +435,7 @@ describe("direct messaging", () => {
       expect((await summary(ana, chatId)).peer.blockedByMe).toBe(true);
       expect((await summary(ben, chatId)).peer.blockedByMe).toBe(false);
 
-      const cara = await createUser(ctx, "cara@example.com");
+      const cara = await createUser(ctx, "cara");
       await api(ctx, cara, "PUT", `/privacy/blocks/${ana.user.id}`);
       const newChat = await api(ctx, ana, "POST", "/chats/direct", { userId: cara.user.id });
       expect(newChat.json()).toMatchObject({ error: { code: "RECIPIENT_UNAVAILABLE" } });
@@ -495,7 +494,7 @@ describe("direct messaging", () => {
     });
 
     it("rejects reports about a chat the reporter is not in", async () => {
-      const eve = await createUser(ctx, "eve@example.com");
+      const eve = await createUser(ctx, "eve");
       const chatId = await openChat(ctx, ana, ben);
       const response = await api(ctx, eve, "POST", "/privacy/reports", {
         userId: ben.user.id,
@@ -507,7 +506,7 @@ describe("direct messaging", () => {
   });
 });
 
-describe("user discovery", () => {
+describe("user profiles", () => {
   let ctx: TestContext;
 
   beforeAll(async () => {
@@ -520,60 +519,9 @@ describe("user discovery", () => {
     await ctx.app.close();
   });
 
-  it("returns only active, verified, unblocked users matching the hashes", async () => {
-    const me = await createUser(ctx, "me@example.com", { phone: "+919800000001" });
-    const friend = await createUser(ctx, "friend@example.com", {
-      displayName: "Friend",
-      phone: "+919800000002",
-    });
-    const unverified = await createUser(ctx, "unverified@example.com", {
-      phone: "+919800000003",
-      phoneVerified: false,
-    });
-    const blocker = await createUser(ctx, "blocker@example.com", { phone: "+919800000004" });
-    const disabled = await createUser(ctx, "disabled@example.com", { phone: "+919800000005" });
-    await api(ctx, blocker, "PUT", `/privacy/blocks/${me.user.id}`);
-    await pool.query("UPDATE users SET status = 'disabled' WHERE id = $1", [disabled.user.id]);
-
-    const phones = [
-      "+919800000001",
-      "+919800000002",
-      "+919800000003",
-      "+919800000004",
-      "+919800000005",
-      "+919800000099",
-    ];
-    const response = await api(ctx, me, "POST", "/users/discover", {
-      phoneHashes: phones.map(phoneHash),
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
-      matches: [
-        {
-          phoneHash: phoneHash("+919800000002"),
-          user: { id: friend.user.id, displayName: "Friend", available: true, blockedByMe: false },
-        },
-      ],
-    });
-    expect(response.body).not.toContain("+91");
-    expect(response.body).not.toContain(unverified.user.id);
-  });
-
-  it("rejects raw phone numbers and oversized batches", async () => {
-    const me = await createUser(ctx, "me@example.com");
-    const raw = await api(ctx, me, "POST", "/users/discover", { phoneHashes: ["+919800000002"] });
-    expect(raw.statusCode).toBe(400);
-
-    const tooMany = await api(ctx, me, "POST", "/users/discover", {
-      phoneHashes: Array.from({ length: 1001 }, (_, i) => phoneHash(`+91980000${i}`)),
-    });
-    expect(tooMany.statusCode).toBe(400);
-  });
-
   it("returns a minimal public profile without identifiers", async () => {
-    const me = await createUser(ctx, "me@example.com");
-    const other = await createUser(ctx, "other@example.com", {
+    const me = await createUser(ctx, "me");
+    const other = await createUser(ctx, "other", {
       displayName: "Other",
       phone: "+919800000010",
     });
@@ -581,6 +529,6 @@ describe("user discovery", () => {
     expect(response.json()).toEqual({
       user: { id: other.user.id, displayName: "Other", available: true, blockedByMe: false },
     });
-    expect(response.body).not.toMatch(/email|phone/);
+    expect(response.body).not.toMatch(/phone|\+91/i);
   });
 });

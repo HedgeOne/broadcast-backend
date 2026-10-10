@@ -48,7 +48,7 @@ describe("PATCH /users/me", () => {
   });
 
   it("completes onboarding and persists the profile", async () => {
-    const session = await login(ctx, "new@example.com");
+    const session = await login(ctx);
     expect(session.isNewUser).toBe(true);
 
     const dateOfBirth = isoYearsAgo(20);
@@ -61,7 +61,7 @@ describe("PATCH /users/me", () => {
     expect(response.json()).toEqual({
       user: {
         id: session.user.id,
-        email: "new@example.com",
+        phoneNumber: session.user.phoneNumber,
         displayName: "Ana Silva",
         username: null,
         dateOfBirth,
@@ -75,13 +75,13 @@ describe("PATCH /users/me", () => {
     });
     expect(me.json()).toMatchObject({ user: { displayName: "Ana Silva", dateOfBirth } });
 
-    const again = await login(ctx, "new@example.com");
+    const again = await login(ctx, session.user.phoneNumber);
     expect(again.isNewUser).toBe(false);
     expect(again.user).toMatchObject({ displayName: "Ana Silva", dateOfBirth });
   });
 
   it("updates only the fields provided", async () => {
-    const session = await login(ctx, "partial@example.com");
+    const session = await login(ctx);
     const dateOfBirth = isoYearsAgo(30);
     await updateMe(session.accessToken, { displayName: "First", dateOfBirth });
 
@@ -91,15 +91,15 @@ describe("PATCH /users/me", () => {
   });
 
   it("ignores fields it does not own", async () => {
-    const session = await login(ctx, "owner@example.com");
+    const session = await login(ctx);
     const response = await updateMe(session.accessToken, {
       displayName: "Ana",
-      email: "attacker@example.com",
+      phoneNumber: "+919811111111",
       id: "00000000-0000-0000-0000-000000000000",
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      user: { id: session.user.id, email: "owner@example.com" },
+      user: { id: session.user.id, phoneNumber: session.user.phoneNumber },
     });
   });
 
@@ -112,14 +112,14 @@ describe("PATCH /users/me", () => {
     ["a future date", { dateOfBirth: isoYearsAgo(-1) }],
     ["an implausibly old date", { dateOfBirth: "1890-01-01" }],
   ])("rejects %s", async (_label, payload) => {
-    const session = await login(ctx, "invalid@example.com");
+    const session = await login(ctx);
     const response = await updateMe(session.accessToken, payload);
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: { code: "VALIDATION_ERROR" } });
   });
 
   it("rejects users younger than 16 and accepts exactly 16", async () => {
-    const session = await login(ctx, "age@example.com");
+    const session = await login(ctx);
 
     const tooYoung = await updateMe(session.accessToken, { dateOfBirth: isoYearsAgo(16, 1) });
     expect(tooYoung.statusCode).toBe(400);

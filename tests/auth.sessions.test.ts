@@ -7,6 +7,7 @@ import {
   createTestApp,
   login,
   resetState,
+  testPhone,
   type TestContext,
 } from "./helpers/auth.js";
 
@@ -45,25 +46,25 @@ describe("sessions and tokens", () => {
   });
 
   it("returns the identity for a valid access token without sensitive fields", async () => {
-    const session = await login(ctx, "me@example.com");
+    const session = await login(ctx);
     const response = await me(session.accessToken);
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       user: {
         id: session.user.id,
-        email: "me@example.com",
+        phoneNumber: session.user.phoneNumber,
         displayName: null,
         username: null,
         dateOfBirth: null,
       },
       device: { id: session.device.id, platform: "ios", name: "Test iPhone" },
     });
-    expect(response.body).not.toMatch(/refreshToken|token_?hash|phone_?number|sessionId/i);
+    expect(response.body).not.toMatch(/refreshToken|token_?hash|sha256|verified_?at|sessionId/i);
   });
 
   it("issues short-lived access tokens with minimal claims", async () => {
-    const session = await login(ctx, "claims@example.com");
+    const session = await login(ctx);
     const claims = ctx.app.jwt.decode<Record<string, unknown>>(session.accessToken);
 
     expect(claims).not.toBeNull();
@@ -74,7 +75,7 @@ describe("sessions and tokens", () => {
   });
 
   it("refreshes and rotates the refresh token", async () => {
-    const session = await login(ctx, "rotate@example.com");
+    const session = await login(ctx);
 
     const response = await refresh(session.refreshToken);
     expect(response.statusCode).toBe(200);
@@ -89,7 +90,7 @@ describe("sessions and tokens", () => {
   });
 
   it("treats reuse of a rotated refresh token as theft and revokes the session", async () => {
-    const session = await login(ctx, "theft@example.com");
+    const session = await login(ctx);
 
     const rotated = (await refresh(session.refreshToken)).json<{
       accessToken: string;
@@ -111,7 +112,7 @@ describe("sessions and tokens", () => {
   });
 
   it("logout revokes the session for both access and refresh tokens", async () => {
-    const session = await login(ctx, "logout@example.com");
+    const session = await login(ctx);
 
     const response = await ctx.app.inject({
       method: "POST",
@@ -125,9 +126,9 @@ describe("sessions and tokens", () => {
   });
 
   it("logout-all revokes every session of the user", async () => {
-    const email = "everywhere@example.com";
-    const phone = await login(ctx, email);
-    const tablet = await login(ctx, email, ANDROID_DEVICE);
+    const number = testPhone();
+    const phone = await login(ctx, number);
+    const tablet = await login(ctx, number, ANDROID_DEVICE);
 
     const response = await ctx.app.inject({
       method: "POST",
@@ -142,8 +143,8 @@ describe("sessions and tokens", () => {
   });
 
   it("keeps other users' sessions intact on logout-all", async () => {
-    const alice = await login(ctx, "alice@example.com");
-    const bob = await login(ctx, "bob@example.com");
+    const alice = await login(ctx);
+    const bob = await login(ctx);
 
     await ctx.app.inject({
       method: "POST",

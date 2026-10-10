@@ -8,7 +8,9 @@ import {
   closeConnections,
   createTestApp,
   resetState,
-  verifyEmail,
+  startChallenge,
+  testPhone,
+  verifyPhone,
   type LoginResult,
   type TestContext,
 } from "./helpers/auth.js";
@@ -34,30 +36,50 @@ describe("auth logging", () => {
     await ctx.app.close();
   });
 
-  it("never writes provider tokens or our tokens to the logs", async () => {
-    const accessToken = ctx.verifier.issue("quiet@example.com");
-    const signedIn = await verifyEmail(ctx.app, { accessToken, device: IOS_DEVICE });
-    const replayed = await verifyEmail(ctx.app, { accessToken, device: IOS_DEVICE });
-    const rejected = await verifyEmail(ctx.app, {
-      accessToken: "forged-provider-token",
-      device: IOS_DEVICE,
+  it("never writes codes, numbers, challenge ids or tokens to the logs", async () => {
+    const phoneNumber = testPhone();
+    const { challengeId } = await startChallenge(ctx, phoneNumber);
+    const code = ctx.otp.latestCode(phoneNumber);
+    const wrongCode = code === "482915" ? "591824" : "482915";
+
+    const wrong = await verifyPhone(ctx.app, { challengeId, code: wrongCode, device: IOS_DEVICE });
+    const signedIn = await verifyPhone(ctx.app, { challengeId, code, device: IOS_DEVICE });
+    const replayed = await verifyPhone(ctx.app, { challengeId, code, device: IOS_DEVICE });
+
+    ctx.otp.failNext("send", "misconfigured");
+    const otherPhone = testPhone();
+    const failed = await ctx.app.inject({
+      method: "POST",
+      url: "/auth/phone/start",
+      payload: { phoneNumber: otherPhone },
+      remoteAddress: "10.200.0.1",
     });
 
+    expect(wrong.statusCode).toBe(400);
     expect(signedIn.statusCode).toBe(200);
-    expect(replayed.statusCode).toBe(401);
-    expect(rejected.statusCode).toBe(401);
+    expect(replayed.statusCode).toBe(410);
+    expect(failed.statusCode).toBe(502);
 
     const session = signedIn.json<LoginResult>();
+    const requestIds = ctx.otp.calls.flatMap((call) => (call.requestId ? [call.requestId] : []));
     const output = lines.join("");
 
+    expect(output).toContain("phone otp sent");
     expect(output).toContain("user authenticated");
-    expect(output).toContain("provider access token replayed");
+    expect(output).toContain("otp provider request failed");
     for (const secret of [
-      accessToken,
-      "forged-provider-token",
+      code,
+      wrongCode,
+      challengeId,
+      ...requestIds,
+      phoneNumber,
+      phoneNumber.slice(1),
+      otherPhone,
+      otherPhone.slice(1),
       session.accessToken,
       session.refreshToken,
       "test-msg91-auth-key",
+      "test-msg91-template-id",
     ]) {
       expect(output).not.toContain(secret);
     }

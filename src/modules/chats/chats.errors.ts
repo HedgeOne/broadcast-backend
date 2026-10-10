@@ -18,6 +18,26 @@ export const chatErrors = {
   recipientUnavailable: () =>
     new AppError(403, "RECIPIENT_UNAVAILABLE", "You can't message this account."),
 
+  messageNotFound: () => new AppError(404, "MESSAGE_NOT_FOUND", "This message is not available."),
+
+  // Missing, deleted, a system event, or from before the sender joined.
+  replyUnavailable: () =>
+    new AppError(400, "REPLY_UNAVAILABLE", "The message you're replying to is not available."),
+
+  mentionsNotAllowed: () =>
+    new AppError(400, "MENTIONS_NOT_ALLOWED", "Mentions are only available in groups."),
+
+  invalidMentions: (userIds: string[]) =>
+    new AppError(400, "INVALID_MENTIONS", "You can only mention current group members.", {
+      userIds,
+    }),
+
+  reactionNotAllowed: () =>
+    new AppError(400, "REACTION_NOT_ALLOWED", "You can't react to this message."),
+
+  deleteForbidden: () =>
+    new AppError(403, "MESSAGE_DELETE_FORBIDDEN", "You can't delete this message."),
+
   clientMessageIdConflict: () =>
     new AppError(
       409,

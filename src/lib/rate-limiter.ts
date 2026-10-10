@@ -9,13 +9,20 @@ export interface RateLimitResult {
 }
 
 export interface RateLimiter {
-  consume(key: string, limit: number, windowSeconds: number): Promise<RateLimitResult>;
+  // `cost` lets one request spend several units (e.g. numbers looked up).
+  consume(
+    key: string,
+    limit: number,
+    windowSeconds: number,
+    cost?: number,
+  ): Promise<RateLimitResult>;
 }
 
-// Atomic fixed window: INCR, set TTL on first hit, return count and TTL.
+// Atomic fixed window: INCRBY cost, set TTL when the key has none, return
+// count and TTL.
 const FIXED_WINDOW_SCRIPT = `
-local count = redis.call("INCR", KEYS[1])
-if count == 1 then
+local count = redis.call("INCRBY", KEYS[1], ARGV[2])
+if redis.call("TTL", KEYS[1]) == -1 then
   redis.call("EXPIRE", KEYS[1], ARGV[1])
 end
 local ttl = redis.call("TTL", KEYS[1])
@@ -25,13 +32,14 @@ return { count, ttl }
 const log = logger.child({ component: "rate-limiter" });
 
 export const redisRateLimiter: RateLimiter = {
-  async consume(key, limit, windowSeconds) {
+  async consume(key, limit, windowSeconds, cost = 1) {
     try {
       const [count, ttl] = (await redis.eval(
         FIXED_WINDOW_SCRIPT,
         1,
         `rl:${key}`,
         windowSeconds,
+        cost,
       )) as [number, number];
 
       return {
@@ -39,8 +47,8 @@ export const redisRateLimiter: RateLimiter = {
         retryAfterSeconds: ttl > 0 ? ttl : windowSeconds,
       };
     } catch (error) {
-      // Fail open: Redis holds only ephemeral state. OTP attempt limits and
-      // resend intervals are enforced by MSG91, not by these counters.
+      // Fail open: Redis holds only ephemeral state. Phone sign-in still
+      // fails closed during an outage, because OTP challenges live in Redis.
       log.warn(
         { err: error instanceof Error ? error.message : error, key },
         "rate limiter unavailable",
@@ -50,7 +58,7 @@ export const redisRateLimiter: RateLimiter = {
   },
 };
 
-// Keeps raw identifiers (emails, phone numbers) out of Redis keys.
+// Keeps raw identifiers (phone numbers) out of Redis keys.
 export function hashKeyPart(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32);
 }

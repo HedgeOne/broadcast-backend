@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { check, date, index, pgEnum, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
-import { bytea, timestamptz } from "./types.js";
+import { timestamptz } from "./types.js";
 
 export const userStatus = pgEnum("user_status", ["active", "disabled", "deleted"]);
 
@@ -13,17 +13,10 @@ export const users = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
 
-    // At least one of phone_number / email is required.
-    phoneNumber: text("phone_number"),
-    phoneNumberVerifiedAt: timestamptz("phone_number_verified_at"),
-    // SHA-256 of phone_number, for contact discovery without raw numbers.
-    phoneNumberSha256: bytea("phone_number_sha256").generatedAlwaysAs(
-      sql`digest(phone_number, 'sha256')`,
-    ),
-
-    // Stored normalised (trimmed, lowercased).
-    email: text("email"),
-    emailVerifiedAt: timestamptz("email_verified_at"),
+    // The sign-in identifier, in E.164. Users are only created after the
+    // number has been verified by OTP, so both columns are always set.
+    phoneNumber: text("phone_number").notNull(),
+    phoneNumberVerifiedAt: timestamptz("phone_number_verified_at").notNull(),
 
     displayName: text("display_name"),
     username: text("username"),
@@ -44,21 +37,13 @@ export const users = pgTable(
     deletedAt: timestamptz("deleted_at"),
   },
   (t) => [
-    check("users_email_lowercase_check", sql`${t.email} IS NULL OR ${t.email} = lower(${t.email})`),
-    check(
-      "users_identifier_present_check",
-      sql`${t.email} IS NOT NULL OR ${t.phoneNumber} IS NOT NULL`,
-    ),
+    check("users_phone_number_e164_check", sql`${t.phoneNumber} ~ '^\\+[1-9][0-9]{6,14}$'`),
     check(
       "users_date_of_birth_range_check",
       sql`${t.dateOfBirth} IS NULL OR ${t.dateOfBirth} >= DATE '1900-01-01'`,
     ),
 
     uniqueIndex("users_phone_number_unique").on(t.phoneNumber),
-    index("users_phone_number_sha256_idx")
-      .on(t.phoneNumberSha256)
-      .where(sql`${t.phoneNumberSha256} IS NOT NULL`),
-    uniqueIndex("users_email_unique").on(t.email),
     uniqueIndex("users_username_unique")
       .on(sql`lower(${t.username})`)
       .where(sql`${t.username} IS NOT NULL`),

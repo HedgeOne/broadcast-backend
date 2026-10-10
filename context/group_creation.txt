@@ -1,0 +1,714 @@
+# Implement the Complete WhatsApp-Style Groups Module in Broadcast
+
+## Objective
+
+Implement the complete **Groups module** in Broadcast, a WhatsApp-inspired messaging application built with Expo React Native and a Node.js backend.
+
+This is an implementation task. Inspect the repositories, design the implementation, modify the actual code, create database migrations, implement APIs and real-time behavior, build the UI, add tests, and verify the result.
+
+Do not stop at a plan, mockup, scaffold, or list of recommendations. Implement the entire feature across the frontend and backend.
+
+The current application is in the demo stage. Existing messages are demo data, so you may refactor the existing messaging architecture where necessary. However, preserve working authentication, user profiles, contact discovery, direct chats, navigation, and established design patterns.
+
+## 1. Existing technology stack
+
+### Frontend repository: `broadcast`
+
+- Expo SDK `~57.0.26`
+- React Native `0.86.3`
+- React `19.2.3`
+- TypeScript `~6.0.3`
+- Expo Router
+- React Query
+- Zustand
+- `expo-contacts`
+- `expo-secure-store`
+- `expo-sqlite`
+- `react-native-safe-area-context`
+
+The package uses `expo-router/entry`.
+
+Existing scripts include `npm run start`, `npm run android`, `npm run ios`, `npm run lint`, `npm run typecheck`, and `npm test`.
+
+**Hard constraint: Expo Go must remain usable.** Do not introduce native dependencies or configuration that silently makes Expo Go unusable. Do not require a custom development build solely for group functionality. If an optional feature genuinely requires native code unavailable in Expo Go, provide a graceful fallback and document the limitation.
+
+### Backend repository: `broadcast-backend`
+
+- Node.js 24
+- TypeScript
+- Fastify
+- PostgreSQL
+- Redis
+- WebSockets
+
+The local backend runs on port `3000`, PostgreSQL is mapped to host port `5433`, and Redis uses port `6379`.
+
+The application already has mobile-number OTP authentication through MSG91 and a direct messaging implementation with chat APIs, message APIs, WebSocket delivery, idempotency, read receipts, and privacy endpoints.
+
+Inspect the actual code before changing it. Do not assume that an existing table, route, or feature is fully implemented just because its name exists.
+
+## 2. Required initial audit
+
+Inspect both repositories and establish the current implementation before making changes.
+
+Inspect:
+
+- Existing database schema and migration history.
+- `groups`, `group_members`, `chats`, `chat_members`, `messages`, `message_reactions`, `message_attachments`, `blocked_users`, `user_settings`, and related tables.
+- Existing chat and message APIs.
+- WebSocket authentication, subscriptions, delivery and receipt handling.
+- Current user authentication and authorization middleware.
+- Contact discovery and contact-matching APIs.
+- Existing chat list, conversation screen, new-chat screen, user profile and navigation.
+- Current theme, UI components, typography, spacing and safe-area conventions.
+- Existing test setup and migration commands.
+
+Reuse and extend the existing implementation. Avoid creating parallel messaging systems or duplicate tables.
+
+Before implementing a feature, trace its real data flow from the UI to the database and back.
+
+## 3. Group creation
+
+Implement a complete group creation flow.
+
+### Create group screen
+
+Users must be able to:
+
+1. Select multiple registered Broadcast users from their contacts or the existing user search.
+2. Search by name or phone number.
+3. Select and deselect participants.
+4. See selected participants as removable chips or avatars.
+5. Enter a group name.
+6. Optionally set a group photo.
+7. Optionally enter a group description.
+8. Review the selected participants before creation.
+9. Create the group and navigate directly to its conversation.
+
+Validate group names, descriptions, participant selection, authorization and any group-size limit supported by the chosen product policy.
+
+Do not invent registered users or populate the interface with fake contacts.
+
+If the current contacts implementation returns unmatched phone numbers, do not automatically create accounts or treat unmatched contacts as group members. Only registered, eligible Broadcast users can join.
+
+### Creator permissions
+
+The group creator becomes the initial group owner and administrator.
+
+The creator must be included in the membership records, and the group creation transaction must not leave behind a partially created group if inserting members or chat records fails.
+
+Create the group, initial membership, group chat association and initial system event atomically.
+
+Prevent duplicate membership records and duplicate group creation caused by repeated client requests.
+
+## 4. Group identity and metadata
+
+Each group should support:
+
+- Group name.
+- Group photo.
+- Group description.
+- Creation timestamp.
+- Creator/owner identity.
+- Current member count.
+- Member list.
+- Administrator list.
+- Group-specific chat history.
+- Notification/mute settings.
+- Group-specific permissions.
+- Invite mechanism and join policy.
+- Last activity and last-message metadata.
+- Group status, including active or deleted where appropriate.
+
+The group name and photo must appear consistently in the chat list, conversation header, group details screen, notifications where supported, and search results.
+
+Allow authorized administrators to edit group name, description and photo.
+
+If only administrators are allowed to edit group information, enforce that rule on the server rather than relying on disabled frontend buttons.
+
+Support an appropriate empty state for a group without messages or a photo.
+
+## 5. Group roles and permissions
+
+Implement explicit, server-enforced group roles.
+
+Use a clearly defined role model:
+
+- **Owner:** The group's original owner or current designated owner, with the highest level of authority.
+- **Admin:** A member with administrative permissions.
+- **Member:** A regular participant.
+
+Define the role hierarchy centrally and use it consistently throughout the backend and frontend.
+
+### Owner capabilities
+
+- All normal administrator capabilities.
+- Transfer ownership to another eligible group member.
+- Promote members to administrator and demote administrators where allowed by the role policy.
+- Remove administrators and members where allowed by the role policy.
+- Manage group-wide settings.
+- Delete the group according to the documented deletion policy.
+
+Ownership transfer must be atomic and auditable. Prevent a group from entering an invalid state with no owner.
+
+### Administrator capabilities
+
+- Add members where group settings permit.
+- Remove members where permitted.
+- Promote eligible members and demote administrators according to the role hierarchy.
+- Edit group information.
+- Manage group permissions.
+- Approve or reject join requests if approval-based joining is enabled.
+- Manage invite links.
+- Moderate group messages according to the implemented message-moderation policy.
+
+Do not allow an administrator to perform an operation forbidden by the role hierarchy.
+
+### Member capabilities
+
+- View group information and eligible member profiles.
+- Send and receive group messages when posting is permitted.
+- Reply to messages.
+- React to messages.
+- Mention other group members.
+- Mute or unmute group notifications.
+- Leave the group.
+- Report inappropriate content or users using the existing privacy/reporting infrastructure.
+
+Members must not be able to perform administrator-only operations by directly calling backend endpoints.
+
+### Permission enforcement
+
+Implement a centralized group authorization service.
+
+Every sensitive operation must verify:
+
+- The authenticated user.
+- Group existence and status.
+- Current membership.
+- Current role.
+- Group-specific permission settings.
+- Target member eligibility.
+- Whether the action is allowed for that role and target.
+
+Never trust a client-supplied role, owner ID, sender ID or membership flag.
+
+Add tests for unauthorized API requests, role escalation, self-promotion, unauthorized removal, invalid ownership transfers and actions against nonmembers.
+
+## 6. Group settings and participation controls
+
+Implement a group settings model that includes:
+
+- Who can edit group information: all members or administrators only.
+- Who can send messages: all members or administrators only.
+- Who can add participants: all members or administrators only.
+- Who can approve new members, where approval is enabled.
+- Whether invite links are enabled.
+- Whether new members may see earlier messages, subject to the product's history-sharing policy.
+
+Persist settings in PostgreSQL and enforce them on the backend.
+
+Changing a setting must take effect immediately for subsequent authorized operations.
+
+The frontend should accurately display the current policy and indicate why an action is unavailable.
+
+Do not implement controls that look functional but have no backend effect.
+
+## 7. Add, remove and invite members
+
+### Add participants
+
+Allow authorized users to add existing Broadcast users through contact selection or user search.
+
+Handle:
+
+- Existing members.
+- Duplicate selections.
+- Blocked users.
+- Users who have left the group.
+- Inactive or unavailable accounts.
+- Groups at their configured member limit.
+- Concurrent membership changes.
+- Unauthorized additions.
+
+Apply the same validation to every API request, regardless of the UI path used.
+
+### Remove members
+
+Authorized administrators can remove eligible members.
+
+When a user is removed:
+
+- Revoke their access to future group messages.
+- Prevent new subscriptions and delivery to their device through this group.
+- Reject their future message submissions.
+- Preserve historical messages according to the application's history-retention policy.
+- Update member count and chat-list metadata.
+- Emit a group system event.
+- Notify affected clients through the supported real-time mechanism.
+
+Do not automatically expose old history to newly added members without an explicit, documented policy.
+
+### Leave group
+
+Implement a Leave Group action with confirmation.
+
+Handle ownership transfer or the last remaining owner/admin/member correctly.
+
+Leaving must revoke future access and subscriptions. It must not accidentally delete the entire group unless the documented policy explicitly requires it.
+
+### Invite links
+
+Implement secure group invite links if compatible with the current deep-linking architecture.
+
+Requirements:
+
+- Cryptographically unpredictable invite tokens.
+- Store only a secure token hash where practical.
+- Support token revocation and regeneration.
+- Support expiry and optional use limits.
+- Enforce group status, capacity and join policy.
+- Support approval-required joining if enabled.
+- Prevent unauthorized users from bypassing group restrictions.
+- Do not reveal private group membership information merely by opening a link.
+
+Integrate with the existing Expo Router deep-link handling. If a full invite-link flow depends on external link infrastructure that is not configured, implement the secure backend contract and in-app flow, then document the remaining setup rather than pretending external links work.
+
+## 8. Group chat
+
+Implement a fully functional group conversation screen using the existing direct-chat screen and shared messaging components as the starting point.
+
+### Header
+
+Display:
+
+- Group photo.
+- Group name.
+- Member count or concise member information.
+- Navigation to group details.
+- Appropriate loading and unavailable states.
+
+### Message list
+
+Support:
+
+- Correct sender identity and avatar.
+- Timestamps.
+- Date separators.
+- Message grouping.
+- Incoming and outgoing message alignment.
+- Loading and pagination for history.
+- Empty group state.
+- Optimistic UI with server reconciliation.
+- Unread-message indicators.
+- New-message scrolling behavior.
+- System events for group creation, joins, departures, removals, role changes and group-setting changes.
+- Correct ordering and deduplication.
+
+Group system events must be generated or validated by the backend. Clients must not be able to forge administrative system messages.
+
+### Composer
+
+Support:
+
+- Text messages.
+- Multiline input.
+- Send action.
+- Keyboard-safe layout.
+- Disabled composer when the user is not permitted to send messages.
+- Clear errors for failed sends.
+- Retry behavior.
+- Reply-to-message functionality.
+- @mentions of group members.
+
+Mentions must be based on actual group membership and resolve to stable user IDs. Do not trust client-supplied mention targets without validation.
+
+### Message interactions
+
+Implement:
+
+- Reply to a specific message.
+- React to a message using an agreed set of emoji reactions.
+- Add and remove the current user's reaction.
+- Display reaction counts and participating users where appropriate.
+- Copy message text.
+- Report a message or user through the existing reporting system.
+- Message deletion according to a defined moderation policy.
+- Delete for everyone only if implemented with correct authorization, retention and synchronization semantics.
+
+Do not expose actions that have no backend implementation.
+
+The current app is text-first. Keep the core group messaging flow functional even if optional media capabilities are not ready.
+
+## 9. Group media and attachments
+
+Implement group media only after inspecting the existing attachment model and storage infrastructure.
+
+Where existing direct messaging has a real attachment upload/download pipeline, reuse it for group messages with the same authorization and privacy checks.
+
+If attachments are not implemented, determine whether a secure storage path already exists before adding one. Do not store arbitrary file bytes in PostgreSQL or claim media sharing works when only a UI button exists.
+
+Any attachment implementation must include:
+
+- Authenticated uploads.
+- File-size and type validation.
+- Authorized downloads.
+- Safe storage permissions.
+- Cleanup of orphaned uploads.
+- Correct message association.
+- Graceful failure handling.
+
+Support images and other attachment types only when their complete upload, storage and rendering flows are implemented.
+
+Do not make native-only media dependencies mandatory for Expo Go.
+
+Voice notes and other media features should reuse existing supported Expo-compatible capabilities where feasible. Clearly identify any functionality that remains unsupported rather than creating placeholder interactions.
+
+## 10. Group discovery and the Chats page
+
+**Groups must appear directly in the existing Chats page alongside individual conversations.**
+
+Do not create a separate mandatory Groups tab.
+
+Update the chat list so direct conversations and group conversations use one coherent list and navigation model.
+
+Each row should display:
+
+- Avatar or group image.
+- Group name.
+- Last message preview.
+- Last activity timestamp.
+- Unread message count.
+- Muted indicator where applicable.
+- Delivery/read or message status where meaningful for the current user.
+- Appropriate sender prefix for group messages, such as the sender's name.
+- A sensible fallback for system events or empty groups.
+
+Sort conversations using the authoritative last activity timestamp.
+
+Support pagination and loading states if the existing chat list is paginated.
+
+Add chat-list search for group names and other supported conversation identifiers.
+
+Do not leak message plaintext into server-generated previews. If E2EE is not implemented, keep the existing demo-stage transport behavior clearly separated from any security claims.
+
+When a group is created, the creator must immediately see it in Chats.
+
+When a group receives a message, its position, preview, timestamp and unread count must update consistently across active sessions.
+
+When a user leaves or is removed, the group should no longer appear as an active conversation according to the documented membership policy.
+
+Do not duplicate group rows or show both the group conversation and its underlying group entity as separate chats.
+
+## 11. Group notifications and unread state
+
+Integrate group messages with the existing notification and receipt model.
+
+Implement:
+
+- Per-group mute/unmute.
+- Correct unread counts.
+- Mark group as read.
+- Clear unread state when the user actually views the conversation according to the existing read policy.
+- Notification routing to the correct group conversation.
+- Sender and group name in notification presentation where supported.
+- Correct behavior when a notification is opened while the app is already running.
+- Correct handling of duplicate or out-of-order events.
+
+Use the existing Expo Notifications infrastructure where configured. Do not create a second unrelated notification system.
+
+Never include plaintext message content in push payloads if the application later enables E2EE. For the current demo-stage transport, document the existing privacy limitations accurately.
+
+## 12. Real-time group delivery
+
+Extend the current WebSocket architecture or the existing messaging transport. Do not create a separate incompatible transport for group messages.
+
+Requirements:
+
+- Authenticate each connection.
+- Verify group membership before subscribing a user to a group stream.
+- Route events only to eligible group members.
+- Stop delivery after a member leaves or is removed.
+- Handle reconnects and missed events.
+- Prevent duplicate visible messages.
+- Handle concurrent sends.
+- Enforce rate limits.
+- Validate all payloads.
+- Avoid broadcasting administrative data to unauthorized members.
+
+Persist accepted messages before acknowledging durable acceptance.
+
+Use a transactional outbox or an equivalent durable event-dispatch mechanism if required by the current architecture, so a backend restart cannot silently lose an accepted message or membership event.
+
+Use PostgreSQL as the durable source of truth and Redis only for ephemeral coordination, routing or caching where appropriate.
+
+Do not assume that WebSocket delivery is durable.
+
+## 13. Group message persistence and data model
+
+Inspect the existing schema first and reuse `groups`, `group_members`, `chats`, `chat_members`, `messages`, `message_reactions` and other existing entities where appropriate.
+
+Define the relationship between a group and its conversation explicitly.
+
+Do not create a second message table exclusively for group messages unless there is a compelling architectural reason.
+
+Implement or adapt the following concepts as needed:
+
+- Group metadata.
+- Membership and role.
+- Membership status and lifecycle timestamps.
+- Group settings.
+- Group-to-chat mapping.
+- Message sender and conversation association.
+- Reply references.
+- Mention metadata.
+- Reactions.
+- Membership and administrative system events.
+- Invite tokens and join requests.
+- Per-user group mute and read state.
+- Durable event dispatch.
+
+Use foreign keys, unique constraints, indexes, appropriate delete behavior and transactions.
+
+Prevent duplicate membership, invalid ownership and cross-group message access.
+
+Design migrations to be reproducible.
+
+Do not silently destroy production data. Demo-only tables may be reset only through an explicit, documented development migration or reset procedure.
+
+Keep private application secrets out of database migrations and seed data.
+
+## 14. End-to-end encryption boundary
+
+The OpenE2EE integration has not yet been established as a completed, production-ready feature.
+
+For this task:
+
+- Do not invent encryption or claim group E2EE is implemented.
+- Do not store private cryptographic keys in PostgreSQL or Redis.
+- Keep group authorization and membership logic independent of the cryptographic transport.
+- Isolate message transport behind a service boundary so group messaging can be integrated with an E2EE protocol later.
+- If the existing direct-chat transport currently uses Base64-encoded plaintext, do not describe it as encrypted.
+- Do not introduce a second delivery path or silently route messages through an unconfigured OpenE2EE relay.
+
+Group messaging should function in the current Expo Go development environment without requiring native E2EE modules.
+
+Document the exact security boundary and remaining E2EE work.
+
+## 15. UI design system
+
+Use the existing Broadcast design system as the single source of truth.
+
+Inspect and reuse the existing theme files and shared UI components. In particular, check the actual equivalents of:
+
+- `src/theme/colors.ts`
+- `src/theme/typography.ts`
+- `src/theme/spacing.ts`
+- `src/theme/radius.ts`
+- `src/theme/sizes.ts`
+- `src/theme/shadows.ts`
+- `src/theme/index.ts`
+
+Do not create duplicate theme systems or hardcode design tokens throughout screens.
+
+The established visual direction is:
+
+- White primary backgrounds.
+- Near-black primary text.
+- Restrained green accents.
+- Light neutral secondary backgrounds.
+- Clear typography and consistent spacing.
+- Native-feeling navigation.
+- Minimum touch targets of approximately 44 × 44 points.
+- Correct iOS Dynamic Island, status-bar and Home Indicator safe areas.
+- Responsive layouts without hardcoded device dimensions.
+
+Reuse the existing components and typography. Ensure the group screens look like part of Broadcast, not a separate demo application.
+
+All buttons, menus, dialogs, forms and interactions must perform real actions.
+
+## 16. Group details screen
+
+Create a complete group details screen accessible from the group conversation header.
+
+Include:
+
+- Group photo and name.
+- Description.
+- Member count.
+- Current user role.
+- Admin section.
+- Full member list.
+- Add participants action.
+- Role labels.
+- Administrator-only settings.
+- Edit group information.
+- Group permissions.
+- Invite link management.
+- Mute/unmute notifications.
+- Search within members.
+- Leave group.
+- Report group where supported by the existing reporting architecture.
+
+Actions must be role-aware and enforced on the server.
+
+Provide confirmation dialogs for destructive or consequential actions.
+
+If a user does not have permission to perform an action, do not show it as an active action.
+
+## 17. Error handling and edge cases
+
+Handle at least:
+
+- Duplicate creation requests.
+- Empty or invalid group names.
+- Invalid participants.
+- Group capacity reached.
+- User already in group.
+- Group deleted or unavailable.
+- User removed while viewing the group.
+- Owner leaves.
+- Last administrator leaves.
+- Ownership transfer races.
+- Concurrent role changes.
+- Concurrent additions and removals.
+- Unauthorized message sends.
+- Group permission changes during an open session.
+- Duplicate messages.
+- Offline sends and retry.
+- WebSocket reconnection.
+- Stale member lists.
+- Invalid invite links.
+- Expired or revoked invitations.
+- Blocked users.
+- Missing group images.
+- Failed attachment uploads, if attachments are implemented.
+- Notification permission denied.
+- Network errors and API failures.
+
+Use typed errors and user-friendly messages. Do not swallow failures or leave optimistic UI in an inconsistent state.
+
+## 18. Testing requirements
+
+Add backend unit tests, API integration tests and frontend tests using the existing testing conventions.
+
+At minimum, test:
+
+### Group creation
+- Valid group creation.
+- Creator becomes owner/admin.
+- Initial participants receive correct roles.
+- Invalid participants are rejected.
+- Duplicate creation does not produce duplicate groups.
+- Partial creation rolls back.
+
+### Permissions
+- Admin can perform authorized operations.
+- Member cannot perform administrator operations.
+- Unauthorized user cannot access group details or messages.
+- Role escalation is rejected.
+- Ownership transfer is valid and atomic.
+- A group cannot end up with an invalid ownership state.
+
+### Membership
+- Add member.
+- Remove member.
+- Leave group.
+- Duplicate add.
+- Rejoin according to policy.
+- Group capacity enforcement.
+- Invite expiry and revocation.
+- Access is revoked after removal.
+
+### Messaging
+- Authorized group message submission.
+- Message persistence.
+- Message delivery to current members.
+- No delivery to unauthorized users.
+- Correct message ordering.
+- Idempotent retries.
+- Reply references.
+- Mention validation.
+- Reaction creation and removal.
+- Correct system events.
+
+### Chats page
+- Groups and direct conversations coexist.
+- New group appears immediately.
+- Group last-message preview updates.
+- Sorting by activity works.
+- Unread counts are correct.
+- Muted groups remain functional.
+- Leaving or removal updates the list.
+- Duplicate chat rows do not appear.
+
+### Regression
+- Existing authentication remains functional.
+- Direct messaging still works.
+- Contact discovery still works.
+- Navigation remains functional.
+- Expo Go compatibility is preserved.
+- Existing unrelated tests pass.
+
+Do not use fake encryption or mocked message delivery as proof that backend group messaging works.
+
+## 19. Implementation quality
+
+Follow the existing repository conventions and use shared services and components.
+
+- Avoid giant screen components.
+- Separate API clients, repositories, services, hooks, types and UI.
+- Use strict TypeScript types.
+- Validate backend input with the validation framework already used in the project.
+- Centralize authorization logic.
+- Add indexes for real query patterns.
+- Use transactions for multi-record operations.
+- Keep list rendering performant.
+- Avoid duplicate WebSocket subscriptions.
+- Clean up listeners on unmount.
+- Use the existing query cache and invalidation patterns.
+- Handle stale and optimistic data correctly.
+- Do not introduce unnecessary dependencies.
+- Do not add mock data to make screens appear complete.
+
+## 20. Explicit exclusions
+
+Do not implement:
+
+- Message pinning.
+- Location sharing.
+- Audio or video calling.
+- Status updates.
+- Fake users or demo messages.
+- Custom cryptographic algorithms.
+- Group E2EE without a separately verified and integrated protocol implementation.
+
+Do not claim that every WhatsApp feature is supported if a feature is not fully implemented. Prioritize a complete, reliable group management and text messaging experience, and document any remaining optional capabilities.
+
+## 21. Final verification and report
+
+After implementation:
+
+1. Run frontend lint, typecheck and tests.
+2. Run backend lint, typecheck and tests using the actual package scripts.
+3. Run database migration checks.
+4. Test group creation, messaging and membership changes using two or more real test accounts.
+5. Verify that unauthorized users cannot retrieve group messages or join protected groups.
+6. Inspect the final diff for security issues, dead code, duplicated APIs and inconsistent data models.
+7. Fix implementation-related failures.
+8. Do not claim any test passed unless you actually ran it and observed a successful result.
+
+Return a final report containing:
+
+- Summary of implemented functionality.
+- Database schema changes and migration names.
+- API endpoints added or modified.
+- Role and permission matrix.
+- WebSocket event types and authorization rules.
+- Frontend screens and components added or modified.
+- Exact local setup and test commands.
+- Actual test results.
+- Expo Go compatibility verification.
+- Any limitations or remaining tasks.
+
+The result must be a working group module integrated into the existing Broadcast application, with groups appearing alongside direct conversations on the Chats page.

@@ -6,12 +6,6 @@ export function safeEqualHex(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-// Fingerprint of a provider access token, used only as a replay-guard key so
-// the token itself is never stored.
-export function fingerprintProviderToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
 // Refresh tokens are "<sessionId>.<secret>". The secret has 256 bits of
 // entropy, so an unkeyed SHA-256 is sufficient for storage.
 export function generateRefreshSecret(): string {
