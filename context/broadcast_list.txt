@@ -1,0 +1,712 @@
+# Build the Complete Broadcast Lists Module in Broadcast — End to End
+
+## Objective
+
+Implement a complete, production-minded **Broadcast Lists module** in the existing Broadcast messaging app, following WhatsApp's broadcast-list delivery model.
+
+This is an implementation task. Inspect the existing frontend and backend repositories, make the necessary database changes, implement all APIs and delivery behavior, build the complete UI, add tests, and run verification.
+
+Do not stop at a plan, scaffold, mockup, or list of recommendations. Complete the implementation in one pass and report the actual results.
+
+The application is currently in the demo stage. Existing messages are demo data, so refactoring the current messaging implementation is acceptable where necessary.
+
+## 1. Existing architecture and constraints
+
+### Frontend
+
+Repository: `broadcast`
+
+- Expo SDK `~57.0.26`
+- React Native `0.86.3`
+- React `19.2.3`
+- TypeScript `~6.0.3`
+- Expo Router
+- TanStack Query
+- Zustand
+- Expo Contacts
+- Expo SQLite
+- Expo SecureStore
+- React Native Safe Area Context
+
+**Expo Go must remain supported.** Do not introduce native-only dependencies or require a development build for broadcast-list functionality.
+
+### Backend
+
+Repository: `broadcast-backend`
+
+- Node.js 24
+- TypeScript
+- Fastify
+- PostgreSQL
+- Redis
+- WebSockets
+
+Development environment:
+- Backend port: `3000`
+- PostgreSQL host port: `5433`
+- Redis port: `6379`
+
+Existing functionality includes mobile-number OTP authentication through MSG91, direct chats, text messaging, WebSocket delivery, read receipts, idempotency, contact discovery and privacy-related APIs.
+
+### Existing database entities
+
+The database already includes entities named:
+
+- `broadcast_lists`
+- `broadcast_list_members`
+- `broadcast_messages`
+- `broadcast_message_recipients`
+
+Other relevant entities include:
+
+- `users`
+- `chats`
+- `chat_members`
+- `messages`
+- `blocked_users`
+- `privacy_settings`
+- `user_settings`
+- `schema_migrations`
+
+Inspect their actual definitions, constraints, indexes, foreign keys, migrations and usage before making changes.
+
+Reuse and extend the existing schema. Do not create duplicate broadcast tables or a second messaging system.
+
+### Explicit constraints
+
+- No message pinning.
+- No location sharing.
+- No fake users or demo data.
+- No custom cryptography.
+- Do not claim E2EE is implemented. OpenE2EE integration has not yet been completed.
+- Keep the existing direct-chat and group-chat implementations working.
+- Preserve the existing Broadcast design system and navigation.
+
+## 2. Follow the correct broadcast-list model
+
+A broadcast list is a saved collection of recipients that the sender can reuse.
+
+It is not a group conversation.
+
+When a sender submits one broadcast message to a list, the system must create an independent delivery to each eligible recipient.
+
+For example, if a list contains 100 recipients, a single send operation creates 100 recipient-specific message deliveries, each associated with that recipient's existing one-to-one chat with the sender.
+
+### Sender experience
+
+The sender can:
+
+1. Create a broadcast list.
+2. Name the list.
+3. Select multiple registered Broadcast users.
+4. Open the list as a conversation-like screen.
+5. Compose and send a broadcast message.
+6. See the broadcast history.
+7. Inspect delivery, read and failure status for each recipient.
+8. Rename the list.
+9. Add or remove recipients.
+10. Mute or unmute the list's notifications where appropriate.
+11. Delete the list without deleting individual chat history.
+12. Retry failed recipient deliveries safely.
+
+### Recipient experience
+
+Each recipient:
+
+- Receives the message in their ordinary one-to-one chat with the sender.
+- Does not see the broadcast list's name.
+- Does not see the other recipients.
+- Does not receive a group-chat message.
+- Can reply privately to the sender through their normal direct chat.
+- Sees normal sender identity, timestamps, message ordering and read behavior.
+- Does not need to join or accept a group to receive a valid broadcast.
+
+Replies must not be copied to the other recipients or automatically appear as messages in their broadcast list.
+
+The sender sees replies in the ordinary direct chat with the replying recipient.
+
+## 3. Architecture: list history versus direct messages
+
+This distinction is mandatory.
+
+There are two related but different views of the same send operation:
+
+**Sender's broadcast history:** A broadcast-list message with recipient-level delivery results.
+
+**Each recipient's direct chat:** An ordinary one-to-one message from the sender, stored and rendered using the existing direct messaging system.
+
+Implement an explicit mapping between a broadcast message, its recipient records and the resulting direct-chat message IDs.
+
+Do not create a shared group chat for a broadcast list.
+
+Do not duplicate a recipient's visible message in their direct conversation.
+
+Do not deliver the same broadcast through both the legacy message transport and a new transport.
+
+A broadcast list is a reusable recipient definition; it is not itself a shared conversation.
+
+## 4. Audit the current implementation first
+
+Before modifying code:
+
+1. Inspect both repositories and their directory structures.
+2. Trace the existing direct-chat send, persistence, WebSocket, receipt and read flows.
+3. Inspect how contacts are discovered and registered users are matched.
+4. Inspect the current Broadcast tab and its navigation.
+5. Inspect all four existing broadcast tables and determine which are functional versus unused.
+6. Inspect authentication, authorization, transaction boundaries, idempotency, rate limits and current database migration conventions.
+7. Determine how direct chats are created or retrieved idempotently.
+8. Identify how the existing UI invalidates chat-list queries and updates unread counts.
+
+Use actual existing code and API contracts. Do not invent file paths or assume that an existing feature works just because a table or route exists.
+
+## 5. Create a broadcast list
+
+Implement the complete creation flow.
+
+### Screen
+
+Provide a dedicated screen with:
+
+- A list name input.
+- Searchable registered contacts.
+- Contact avatars and names.
+- Phone numbers where appropriate.
+- Multi-select behavior.
+- Selected-recipient chips or an equivalent clear selection summary.
+- Ability to remove selected recipients.
+- A visible recipient count.
+- Create and cancel actions.
+- Validation and loading states.
+
+Use the existing contact discovery and user-search APIs.
+
+Only registered, eligible Broadcast users can be added. Unregistered phone numbers must not silently become members.
+
+Do not upload names or entire address books merely to build a broadcast list.
+
+### Validation
+
+- Trim and validate list names.
+- Prevent empty names.
+- Enforce the configured maximum number of recipients.
+- Prevent duplicate recipients.
+- Require at least one valid recipient.
+- Handle blocked users and privacy restrictions.
+- Enforce a configurable maximum of 256 recipients per list by default, mirroring WhatsApp's documented limit. Keep the limit centralized so it can be changed later.
+- Allow a user to create multiple lists without an arbitrary small global limit.
+
+Create the list and its initial membership records transactionally.
+
+Ensure that repeated requests do not create duplicate lists accidentally. Use an explicit client-generated idempotency key for creation where appropriate.
+
+On success, navigate to the newly created broadcast-list screen and display the list on the Broadcast tab immediately.
+
+## 6. Broadcast tab
+
+Integrate the feature into the existing Broadcast tab. Do not create an unrelated navigation system.
+
+The tab should show the user's broadcast lists.
+
+Each row should display:
+
+- List name.
+- Recipient count.
+- Last broadcast preview, if available.
+- Last activity timestamp.
+- Unread or pending indicators where relevant.
+- Mute state where appropriate.
+
+Support:
+
+- Create-list action.
+- Search lists by name.
+- Open a list.
+- Rename a list.
+- Edit recipients.
+- Delete a list with confirmation.
+- Loading, error and empty states.
+- Refresh and pagination if the existing data scale warrants it.
+
+Use the existing theme, typography, spacing, reusable components and safe-area handling.
+
+Never insert fake lists or fake conversations to make the interface look populated.
+
+If the app's bottom navigation already includes Chats, Broadcast and Profile, preserve that structure.
+
+## 7. Broadcast list conversation screen
+
+Opening a broadcast list must show the sender's history of messages sent through that list.
+
+The header should display:
+
+- List name.
+- Recipient count.
+- Navigation to list information and recipient management.
+- Appropriate loading and error states.
+
+The message history should support:
+
+- Chronological ordering.
+- Timestamps.
+- Message grouping where consistent with existing direct-chat UI.
+- Text message content.
+- Pending or sending state.
+- Sent/accepted state.
+- Per-recipient delivery summary.
+- Per-recipient read summary.
+- Partial failures.
+- Retry of failed recipients.
+- Empty state for a new list.
+
+For example, a broadcast message might show:
+
+- 100 intended recipients.
+- 98 accepted by the delivery system.
+- 90 delivered.
+- 65 read.
+- 2 failed.
+
+These are illustrative numbers, not hardcoded values.
+
+Compute counts from authoritative recipient records. Do not fabricate receipt counts or equate successful API responses with recipient delivery.
+
+Tapping the status summary should open a recipient report showing the actual status for each recipient.
+
+The sender must be able to distinguish a message that is queued from one accepted for delivery, delivered to a device and read.
+
+## 8. Sending a broadcast message
+
+Implement the complete message composer and delivery pipeline.
+
+For the initial implementation, support text messages using the existing direct-chat text-message functionality. Reuse existing attachment capabilities only if they are already fully implemented and compatible with the current transport.
+
+Do not add nonfunctional attachment buttons.
+
+### Send operation
+
+When the sender submits a message:
+
+1. Validate the sender's authorization to use the list.
+2. Load the current eligible membership snapshot.
+3. Validate the message content and applicable limits.
+4. Create a broadcast-message record.
+5. Create a recipient record for each intended recipient.
+6. Resolve or create the sender-recipient direct chat using the existing idempotent implementation.
+7. Persist one normal direct-chat message per recipient.
+8. Associate each resulting direct message with its broadcast recipient record.
+9. Commit the durable work before reporting that the broadcast has been accepted.
+10. Dispatch delivery events using the existing real-time delivery infrastructure or a durable outbox.
+11. Update each recipient's state independently.
+12. Reconcile the sender's broadcast history and delivery summary.
+
+Use transactions and durable dispatch so a backend restart cannot silently lose accepted work.
+
+If the recipient count is too large for one transaction or synchronous request, persist the broadcast and process its recipients in bounded batches through the existing background-processing architecture or a suitable worker. Do not introduce unnecessary microservices.
+
+For the default 256-recipient cap, the implementation may use bounded transactional processing, but it must still handle partial failures and retries safely.
+
+### Idempotency and duplicate prevention
+
+A network retry must not create a second broadcast or duplicate direct messages.
+
+Use an idempotency key scoped to the authenticated sender and the broadcast operation. Enforce the required uniqueness in PostgreSQL.
+
+For each broadcast recipient, ensure that retrying the operation cannot create duplicate message rows.
+
+Do not rely only on client-side disabled buttons.
+
+### Failure handling
+
+A broadcast can partially succeed.
+
+For example, if 80 recipients are eligible and 76 messages are successfully persisted while 4 fail, preserve the 76 successful deliveries and record the other 4 as failed or retryable according to the actual failure.
+
+Do not mark the entire broadcast failed if only some recipients fail.
+
+Provide a retry operation that targets only retryable recipients.
+
+Do not retry permanently invalid or unauthorized recipients indefinitely.
+
+## 9. Direct-chat integration
+
+Each recipient-specific broadcast message must be inserted into the existing direct-chat message pipeline.
+
+Reuse the current message model, sender/recipient identity, chat membership, sequence allocation, WebSocket event delivery, idempotency and receipt mechanisms.
+
+Do not create a separate recipient-facing broadcast-message format that the direct-chat UI cannot render.
+
+The recipient must see the broadcast message in the same conversation where they would see an ordinary message from the sender.
+
+If the sender has never directly messaged that recipient, create or retrieve the direct chat idempotently.
+
+If the direct chat already exists, reuse it. Do not create duplicate chats.
+
+Update the recipient's Chats page with the correct:
+
+- Last message.
+- Timestamp.
+- Unread count.
+- Conversation ordering.
+- Notification behavior.
+- Read state.
+
+The sender's direct chat with each recipient should also reflect the individual message because the sender has sent that person a normal private message.
+
+The sender's broadcast history must separately show the broadcast operation and aggregate status.
+
+Never show the same message twice in a recipient's direct-chat history.
+
+## 10. Recipient privacy and eligibility
+
+Broadcast privacy is a core invariant.
+
+- Recipients must not see each other.
+- Recipient lists must be visible only to authorized users of the sending account.
+- No recipient endpoint may expose the broadcast's complete membership.
+- A recipient must not be able to retrieve the sender's broadcast-list name or list metadata through the recipient-specific message.
+- Broadcast-list membership and management APIs must enforce ownership.
+- Sender and recipient IDs must be derived from authenticated server state, not trusted from client payloads.
+- Apply existing block and privacy policies.
+- Do not deliver messages to unauthorized, blocked or ineligible recipients.
+- Keep recipient-specific errors from exposing private information about other recipients.
+
+WhatsApp's saved-sender-number rule cannot be reproduced reliably without a trustworthy application-level signal. Do not pretend that local contact membership is known to the server.
+
+Implement eligibility using registered Broadcast accounts, the existing privacy and blocking model, and a clear app-level policy. If an explicit recipient broadcast opt-in is required by the existing product policy, enforce it server-side and provide the relevant settings. Do not silently invent a contact-sync mechanism or persist uploaded address books to infer eligibility.
+
+## 11. Recipient-level message status
+
+Use the existing receipt infrastructure wherever possible.
+
+Define and document recipient states with clear transitions, such as:
+
+- `queued`
+- `processing`
+- `sent`
+- `delivered`
+- `read`
+- `failed`
+
+Use the project's existing status vocabulary if it already provides equivalent semantics.
+
+Do not allow a status to move backward because of duplicate or out-of-order events.
+
+The meaning of each state must be explicit:
+
+- `queued`: accepted into the durable broadcast pipeline but not yet handed off successfully.
+- `sent`: the corresponding direct message was durably persisted and accepted by the delivery system.
+- `delivered`: the recipient device acknowledged delivery according to the existing receipt protocol.
+- `read`: the recipient's application acknowledged reading under the existing read policy.
+- `failed`: the delivery failed and requires classification as retryable or permanent.
+
+Store error codes and safe diagnostic metadata without leaking message contents or private information.
+
+If the existing system has more precise states, preserve them rather than losing information through an inaccurate mapping.
+
+### Receipt synchronization
+
+When the recipient reads the message in the ordinary direct chat, update the associated broadcast recipient status to `read`.
+
+When the recipient's device acknowledges delivery, update the corresponding recipient status to `delivered`.
+
+Use the existing message-to-recipient mapping and receipt processing.
+
+Do not independently invent delivery or read events just to update the broadcast screen.
+
+If a recipient has disabled read receipts, follow the existing policy and do not claim a read event that the system cannot observe.
+
+## 12. Replies and subsequent conversations
+
+Replies must work naturally.
+
+- A recipient replies in their ordinary one-to-one chat.
+- The reply goes only to the original sender.
+- No other broadcast recipients receive the reply.
+- The reply is stored as a normal direct message.
+- The sender sees the reply in the corresponding one-to-one conversation.
+- The sender can open that recipient's direct chat from the recipient report if an appropriate navigation path exists.
+
+Do not copy replies into the broadcast history as if they were part of a shared conversation.
+
+If you add a link from the broadcast recipient report to the direct chat, it must navigate to the existing direct conversation rather than create a new chat.
+
+## 13. Edit recipients and rename lists
+
+Implement a complete list-information screen.
+
+The sender can:
+
+- Rename the list.
+- Add registered users.
+- Remove recipients.
+- Search current members.
+- View current recipient count.
+- Inspect list details.
+- Delete the list.
+
+When recipients change, apply the new membership to future broadcasts only.
+
+Do not add a newly selected recipient to already-sent broadcast operations.
+
+Do not remove previously sent direct messages when a recipient is removed from the list.
+
+Do not revoke historical direct-chat access simply because someone is removed from the broadcast list. This is not a group membership system.
+
+Make membership updates transactional and enforce list ownership on the backend.
+
+Handle concurrent list edits and broadcast sends deterministically. Each broadcast must retain a snapshot of its intended recipient set so later edits cannot change its historical meaning.
+
+## 14. Delete a broadcast list
+
+Implement deletion with an explicit confirmation.
+
+Deleting a broadcast list must remove or archive the saved grouping and its management access according to the documented deletion policy.
+
+It must not delete the normal one-to-one chats or messages already delivered to recipients.
+
+Do not delete historical direct-chat messages or recipient receipt records merely because the sender deletes the list.
+
+If list history is retained for auditability, ensure it is no longer shown as an active list and that access follows the deletion policy.
+
+Prevent deletion races from causing a broadcast to be accepted without a valid, well-defined recipient snapshot.
+
+## 15. Notifications and unread counts
+
+Integrate with existing Expo Notifications and chat unread-count behavior where configured.
+
+- Recipient devices should receive the normal one-to-one message notification.
+- Do not notify recipients that other people received the same broadcast.
+- Do not create a group notification.
+- Update the sender's broadcast status when recipient acknowledgments arrive.
+- Update recipient unread counts and chat ordering correctly.
+- Respect mute settings, notification permissions and current application state.
+- Avoid duplicate notifications on retry or reconnect.
+- Route a notification tap to the correct recipient's direct conversation.
+
+If a broadcast-list-specific notification is useful to the sender, implement it without duplicating notifications already provided by the current chat architecture.
+
+Do not create a second unrelated notification service.
+
+## 16. Real-time updates and durable processing
+
+Extend the existing WebSocket and backend message infrastructure.
+
+Implement the necessary events for:
+
+- Broadcast accepted.
+- Recipient delivery status changed.
+- Recipient read status changed.
+- Broadcast partially completed.
+- Broadcast fully completed.
+- List membership changed.
+- List metadata changed.
+- List deleted.
+
+Use authenticated subscriptions and validate list ownership before delivering list-specific status events.
+
+Do not send the full recipient list to unauthorized clients.
+
+Use PostgreSQL as the durable source of truth. Redis may be used for ephemeral coordination or routing but must not be the sole store of accepted broadcasts.
+
+If the existing architecture has a transactional outbox, extend it. Otherwise, implement a durable dispatch mechanism appropriate to the current modular monolith.
+
+Handle process restarts, retries, WebSocket reconnects and duplicate events without losing accepted work or duplicating visible messages.
+
+## 17. Database and API design
+
+Inspect the existing schema and extend it rather than creating parallel entities.
+
+Ensure the data model supports:
+
+- List owner.
+- List name and timestamps.
+- Membership with unique constraints.
+- Soft deletion or another explicit deletion policy.
+- Broadcast message history.
+- Recipient snapshots.
+- Mapping to each recipient's direct-chat message ID.
+- Recipient delivery/read/failure status.
+- Retry count and safe failure metadata.
+- Idempotency keys.
+- Durable dispatch where needed.
+
+Use foreign keys, unique constraints, indexes, transactions and appropriate deletion behavior.
+
+Consider indexes for:
+
+- Lists owned by a user.
+- Members in a list.
+- Broadcast history by list and creation time.
+- Recipient statuses by broadcast message.
+- Recipient message mapping.
+- Pending or retryable delivery work.
+- Receipt-to-broadcast-recipient lookup.
+
+Do not store unnecessary duplicate message bodies in the broadcast tables. Keep one authoritative direct-chat message per recipient, with the broadcast tables storing the operation and its delivery metadata.
+
+Add or modify authenticated APIs using the existing route and service conventions. The exact endpoints should follow the repository's existing style, but the implementation must cover:
+
+- Create list.
+- List current user's broadcast lists.
+- Fetch list details.
+- Rename list.
+- Add recipients.
+- Remove recipients.
+- Delete list.
+- Fetch broadcast history.
+- Send a broadcast.
+- Fetch recipient-level delivery reports.
+- Retry eligible failed deliveries.
+- Update mute settings if supported.
+- Process delivery/read acknowledgments through the existing receipt system.
+
+Validate every request and enforce ownership in the backend. Do not rely on client-side access control.
+
+Write forward migrations that are reproducible. Never silently destroy production data or rewrite an already-applied migration without a safe migration strategy.
+
+## 18. Security and abuse prevention
+
+Implement:
+
+- Authentication for every endpoint.
+- Ownership checks on all list-management operations.
+- Authorization checks for each recipient and message.
+- Rate limits for list creation and broadcast sending.
+- Recipient-count and message-size limits.
+- Input validation.
+- Idempotency.
+- Safe failure classification.
+- Protection against duplicate sends.
+- Protection against cross-account access.
+- Correct block/privacy handling.
+- Audit-friendly metadata for consequential operations.
+
+Do not trust client-supplied owner IDs, sender IDs, delivery status or read status.
+
+Do not permit arbitrary users to send messages as another user.
+
+Do not log unnecessary phone numbers, full recipient lists or message bodies.
+
+Because E2EE has not been implemented yet, do not claim broadcast messages are end-to-end encrypted. Keep the transport abstraction compatible with future E2EE work without inventing a cryptographic implementation.
+
+## 19. UI and design system
+
+Use the existing Broadcast design system as the single source of truth.
+
+Inspect and reuse the existing theme files and shared components, including the actual equivalents of:
+
+- `src/theme/colors.ts`
+- `src/theme/typography.ts`
+- `src/theme/spacing.ts`
+- `src/theme/radius.ts`
+- `src/theme/sizes.ts`
+- `src/theme/shadows.ts`
+- `src/theme/index.ts`
+
+Do not create duplicate theme systems or hardcode colors and spacing throughout the new screens.
+
+Keep the established visual style:
+
+- White primary background.
+- Near-black primary text.
+- Restrained green accents.
+- Light neutral surfaces.
+- Consistent typography and spacing.
+- Native-feeling navigation.
+- Correct safe-area handling.
+- Touch targets of approximately 44 × 44 points or larger.
+
+Build reusable components for recipient selection, recipient rows, list headers, status summaries and recipient reports.
+
+All buttons, menus, dialogs, forms and actions must perform real operations.
+
+## 20. Testing requirements
+
+Add tests using the existing backend and frontend test frameworks.
+
+### List management
+
+- Create a list.
+- Rename a list.
+- Add recipients.
+- Remove recipients.
+- Delete a list.
+- Enforce the recipient limit.
+- Reject invalid or duplicate members.
+- Prevent access by a different account.
+- Preserve already-sent messages after list edits and deletion.
+
+### Broadcast delivery
+
+- Send one message to multiple recipients.
+- Each recipient gets exactly one normal direct-chat message.
+- Existing direct chats are reused.
+- Recipients cannot see one another.
+- Recipient replies remain private.
+- Recipient-specific statuses are recorded accurately.
+- Duplicate requests do not create duplicate messages.
+- Partial failures preserve successful deliveries.
+- Retry only eligible failed recipients.
+- Broadcast history retains the correct recipient snapshot.
+
+### Receipts and real-time behavior
+
+- Delivery acknowledgment updates the correct recipient.
+- Read acknowledgment updates the correct recipient.
+- Out-of-order events do not regress status.
+- Reconnection does not duplicate messages.
+- Backend restart does not lose accepted broadcast work.
+- Sender status summaries match recipient records.
+
+### Privacy and authorization
+
+- Nonowners cannot manage a list.
+- Unauthorized users cannot retrieve recipient reports.
+- A recipient cannot retrieve the sender's full broadcast list.
+- Blocked or ineligible recipients are not sent messages.
+- Client-supplied sender identities or status values cannot bypass authorization.
+
+### Frontend
+
+- Broadcast tab displays lists.
+- Create-list flow works.
+- List history renders correctly.
+- Recipient reports show real status.
+- Rename, add, remove and delete actions work.
+- Partial failure and retry states are visible.
+- Recipient direct-chat rendering remains correct.
+- Expo Go compatibility is preserved.
+- Existing direct messaging, group messaging, authentication, contacts and navigation continue to work.
+
+Use real database-backed integration tests for delivery behavior. Do not claim success based only on mocked UI or mocked cryptographic functions.
+
+## 21. Final verification
+
+After implementation:
+
+1. Run frontend lint, typecheck and tests.
+2. Run backend lint, typecheck and tests using the actual package scripts.
+3. Run migration checks.
+4. Test with multiple real test accounts.
+5. Verify a single broadcast creates independent direct messages and no group chat.
+6. Verify delivery and read receipts update the correct broadcast recipient.
+7. Verify duplicate retries do not duplicate messages.
+8. Inspect the final diff for privacy leaks, plaintext duplication, authorization bypasses, race conditions and dead code.
+9. Fix failures caused by your changes.
+10. Do not claim a command passed unless it was actually run successfully.
+
+Return a final report containing:
+
+- Architecture and data model.
+- Database migrations.
+- API endpoints added or modified.
+- Broadcast delivery and retry mechanism.
+- Mapping between broadcast messages and direct-chat messages.
+- Receipt and notification behavior.
+- Frontend screens and components.
+- Exact setup and test commands.
+- Actual test results.
+- Remaining limitations and unresolved issues.
+
+The final result must be a fully working broadcast-list feature integrated into the existing Broadcast app. A sender must be able to create and manage a list, send a message once, have every eligible recipient receive it as a normal private direct message, and inspect the actual delivery status of each recipient.

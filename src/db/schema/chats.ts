@@ -99,12 +99,21 @@ export const chatMembers = pgTable(
 
     // Messages at or below this sequence are hidden from the member.
     historyFromSequence: bigint("history_from_sequence", { mode: "number" }).notNull().default(0),
+    // Clear Chat: the member's own view ends at this sequence. It only ever
+    // grows and is folded into history_from_sequence, including on rejoin.
+    clearedThroughSequence: bigint("cleared_through_sequence", { mode: "number" })
+      .notNull()
+      .default(0),
+    clearedAt: timestamptz("cleared_at"),
 
     lastDeliveredSequence: bigint("last_delivered_sequence", { mode: "number" })
       .notNull()
       .default(0),
     lastReadSequence: bigint("last_read_sequence", { mode: "number" }).notNull().default(0),
 
+    // Notifications are muted while NOW() < muted_until (server time).
+    // 9999-12-31 means "Always". Expired values are equivalent to NULL;
+    // the notification sweep clears them, but nothing depends on that.
     mutedUntil: timestamptz("muted_until"),
 
     disappearingMessagesSeconds: integer("disappearing_messages_seconds"),
@@ -130,6 +139,10 @@ export const chatMembers = pgTable(
 
     check("chat_members_history_check", sql`${t.historyFromSequence} >= 0`),
     check(
+      "chat_members_cleared_check",
+      sql`${t.clearedThroughSequence} >= 0 AND ${t.clearedThroughSequence} <= ${t.historyFromSequence}`,
+    ),
+    check(
       "chat_members_sequence_check",
       sql`${t.lastDeliveredSequence} >= 0 AND ${t.lastReadSequence} >= 0 AND ${t.lastReadSequence} <= ${t.lastDeliveredSequence}`,
     ),
@@ -149,6 +162,9 @@ export const chatMembers = pgTable(
     index("chat_members_chat_active_idx")
       .on(t.chatId)
       .where(sql`${t.leftAt} IS NULL`),
+    index("chat_members_muted_until_idx")
+      .on(t.mutedUntil)
+      .where(sql`${t.mutedUntil} IS NOT NULL`),
   ],
 );
 

@@ -1,10 +1,29 @@
 import { sql } from "drizzle-orm";
-import { foreignKey, index, pgEnum, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  check,
+  foreignKey,
+  index,
+  pgEnum,
+  pgTable,
+  text,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 import { timestamptz } from "./types.js";
 import { users } from "./users.js";
 
 export const devicePlatform = pgEnum("device_platform", ["ios", "android"]);
+
+// Why a device's push token was deactivated: the app unregistered it, the
+// session signed out, another account registered the same install, or the
+// provider reported the token as no longer valid.
+export const devicePushRevocation = pgEnum("device_push_revocation", [
+  "unregistered",
+  "logout",
+  "replaced",
+  "invalid",
+]);
 
 // updated_at is maintained by the set_updated_at() trigger.
 export const devices = pgTable(
@@ -21,7 +40,18 @@ export const devices = pgTable(
     appVersion: text("app_version"),
     osVersion: text("os_version"),
 
+    // Expo push token of the install signed in on this device. NULL when
+    // there is none or it was deactivated (push_token_revoked_reason says
+    // why). A token belongs to one install, so it is on at most one row.
     pushToken: text("push_token"),
+    pushTokenRegisteredAt: timestamptz("push_token_registered_at"),
+    pushTokenRevokedAt: timestamptz("push_token_revoked_at"),
+    pushTokenRevokedReason: devicePushRevocation("push_token_revoked_reason"),
+    // Last time Expo accepted a notification for the token, and the last
+    // provider error code (never message content).
+    pushLastSuccessAt: timestamptz("push_last_success_at"),
+    pushLastErrorCode: text("push_last_error_code"),
+    pushLastErrorAt: timestamptz("push_last_error_at"),
 
     lastActiveAt: timestamptz("last_active_at"),
 
@@ -44,6 +74,10 @@ export const devices = pgTable(
     uniqueIndex("devices_push_token_unique")
       .on(t.pushToken)
       .where(sql`${t.pushToken} IS NOT NULL`),
+    check(
+      "devices_push_token_format_check",
+      sql`${t.pushToken} IS NULL OR (char_length(${t.pushToken}) <= 255 AND ${t.pushToken} ~ '^(Expo|Exponent)PushToken\\[[A-Za-z0-9_:.-]+\\]$')`,
+    ),
   ],
 );
 

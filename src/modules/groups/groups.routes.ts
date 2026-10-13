@@ -1,5 +1,6 @@
 import type { FastifyPluginCallback } from "fastify";
 
+import { photoRef } from "../media/media.schemas.js";
 import {
   addMembersBody,
   createGroupBody,
@@ -44,6 +45,17 @@ export const groupsRoutes: FastifyPluginCallback<GroupsRoutesOptions> = (
     const { chatId } = groupParams.parse(request.params);
     const body = updateGroupBody.parse(request.body);
     return { group: await service.updateInfo(request.auth.userId, chatId, body) };
+  });
+
+  app.put("/:chatId/photo", async (request) => {
+    const { chatId } = groupParams.parse(request.params);
+    const photo = photoRef.parse(request.body);
+    return { group: await service.setPhoto(request.auth.userId, chatId, photo) };
+  });
+
+  app.delete("/:chatId/photo", async (request) => {
+    const { chatId } = groupParams.parse(request.params);
+    return { group: await service.removePhoto(request.auth.userId, chatId) };
   });
 
   app.patch("/:chatId/settings", async (request) => {

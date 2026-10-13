@@ -57,6 +57,73 @@ const envSchema = z.object({
   // Including the owner.
   GROUP_MAX_MEMBERS: z.coerce.number().int().min(2).max(1024).default(256),
 
+  // Recipients per broadcast list (WhatsApp's documented limit is 256).
+  BROADCAST_MAX_RECIPIENTS: z.coerce.number().int().min(1).max(1024).default(256),
+  // How often accepted broadcasts with undelivered recipients (e.g. after a
+  // restart) are re-driven. 0 disables the sweep.
+  BROADCAST_SWEEP_INTERVAL_MS: z.coerce.number().int().min(0).default(15_000),
+
+  // Private S3 bucket for message media. Credentials come from the AWS SDK's
+  // default provider chain (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY locally,
+  // an IAM role in production) and are never read into app config. Without
+  // a bucket, media endpoints answer 503.
+  AWS_REGION: z.string().trim().min(1).default("ap-south-1"),
+  AWS_S3_BUCKET: z.string().trim().min(3).optional(),
+  // Largest file a client may upload. 15 MB is the product limit; the cap
+  // stops a misconfiguration from silently raising it.
+  MEDIA_MAX_FILE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(15 * 1024 * 1024)
+    .default(15 * 1024 * 1024),
+  // Lifetime of a presigned upload (PUT) URL; long enough for a 15 MB
+  // upload on a slow mobile connection.
+  MEDIA_UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+  // Lifetime of a presigned download (GET) URL; clients fetch a new one
+  // when it expires.
+  MEDIA_DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+  // Finalized uploads not attached to a message within this window are
+  // deleted.
+  MEDIA_UNATTACHED_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(300)
+    .default(24 * 3600),
+  // How often abandoned and unreferenced objects are cleaned up. 0 disables.
+  MEDIA_SWEEP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(10 * 60_000),
+
+  // Push notifications through the Expo Push Service (which forwards to
+  // APNs and FCM). The access token is only needed when "enhanced push
+  // security" is enabled for the Expo project; it stays on the backend.
+  EXPO_PUSH_API_URL: z.url({ protocol: /^https?$/ }).default("https://exp.host/--/api/v2/push"),
+  EXPO_ACCESS_TOKEN: z
+    .string()
+    .trim()
+    .transform((value) => value || undefined)
+    .optional(),
+  PUSH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000),
+  // How often due notification jobs and push receipts are processed (jobs
+  // are also processed right after a message commits). 0 disables.
+  PUSH_SWEEP_INTERVAL_MS: z.coerce.number().int().min(0).default(5000),
+  // Attempts per device before a push is given up, with exponential
+  // backoff between them.
+  PUSH_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
+  // Notifications not accepted by the provider within this age are dropped
+  // rather than delivered late; this also bounds the queue during an outage.
+  PUSH_MAX_AGE_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(24 * 3600)
+    .default(3600),
+  // Expo recommends fetching receipts about 15 minutes after sending.
+  PUSH_RECEIPT_DELAY_SECONDS: z.coerce.number().int().min(0).max(86_400).default(900),
+
   // MSG91 SendOTP V5 API, called only from the backend. None of these may
   // reach the mobile app.
   MSG91_API_BASE_URL: z.url().default("https://control.msg91.com"),

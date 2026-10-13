@@ -527,7 +527,13 @@ describe("user profiles", () => {
     });
     const response = await api(ctx, me, "GET", `/users/${other.user.id}`);
     expect(response.json()).toEqual({
-      user: { id: other.user.id, displayName: "Other", available: true, blockedByMe: false },
+      user: {
+        id: other.user.id,
+        displayName: "Other",
+        available: true,
+        blockedByMe: false,
+        photoId: null,
+      },
     });
     expect(response.body).not.toMatch(/phone|\+91/i);
   });

@@ -1,0 +1,541 @@
+# Implement Profile Photos, Group Images and Broadcast List Images Throughout Broadcast
+
+## Objective
+
+Implement a complete profile-photo and conversation-image system across the Broadcast mobile application.
+
+Users must be able to set, change, view and remove their personal profile photos during onboarding and later from their profile page. They must also be able to set photos for groups and broadcast lists.
+
+When a user taps a personal avatar, group icon or broadcast-list image, open a polished, WhatsApp-style image viewer where permitted.
+
+This is an implementation task. Inspect the frontend and backend repositories, implement the complete feature, add migrations and tests, run the available checks, fix failures, and report the actual results.
+
+Do not stop at a plan, mockup or partially wired UI.
+
+## 1. Existing architecture
+
+### Frontend: `broadcast`
+
+- Expo SDK `~57.0.26`
+- React Native `0.86.3`
+- React `19.2.3`
+- TypeScript `~6.0.3`
+- Expo Router
+- TanStack Query
+- Zustand
+- Expo Image Picker / Expo-compatible file handling where installed
+- Expo SQLite and SecureStore
+
+**Expo Go must remain supported.** Do not introduce a native dependency that makes this feature require a custom development build.
+
+### Backend: `broadcast-backend`
+
+- Node.js 24
+- TypeScript
+- Fastify
+- PostgreSQL
+- Redis
+- WebSockets
+
+Authentication uses MSG91 mobile OTP. The app already has direct chats, groups, broadcast lists, contact discovery, privacy-related APIs and an S3 media-storage integration under implementation.
+
+### S3 configuration
+
+Use the existing backend configuration:
+
+- `AWS_REGION=ap-south-1`
+- `AWS_S3_BUCKET=holler-media-prod-998`
+
+The S3 bucket is private.
+
+Reuse the existing AWS SDK configuration, credential provider, upload-session service, presigned URL generation, metadata validation and authorized download infrastructure wherever possible.
+
+Never expose AWS access keys, secret keys, permanent public URLs or unrestricted storage access in the frontend.
+
+## 2. Inspect the existing implementation first
+
+Before changing code:
+
+1. Inspect both repositories and their actual directory structures.
+2. Inspect onboarding, profile editing, user-profile views, chat lists, conversation headers, group details, broadcast-list screens and navigation.
+3. Inspect the current user schema, group schema, broadcast-list schema, privacy settings, contact-discovery implementation and media-related database migrations.
+4. Inspect existing S3 upload/download APIs and determine which are implemented and functional.
+5. Inspect the existing shared Avatar/Image component, theme files, React Query conventions, authentication state and WebSocket update mechanisms.
+6. Trace how user profiles and group/list metadata are loaded and cached.
+
+Reuse existing infrastructure. Do not create a second S3 client, a duplicate image-upload system, or a separate avatar design system.
+
+## 3. Personal profile photo during onboarding
+
+Update the existing onboarding flow to let a user choose a profile photo.
+
+### UX requirements
+
+- Show a circular profile-photo placeholder.
+- Offer an obvious Add photo action.
+- Allow choosing a photo from the device's photo library.
+- Allow taking a photo with the camera where supported.
+- Allow the user to crop or adjust the image into a square avatar using an Expo-compatible implementation.
+- Show the selected image immediately as a local preview.
+- Allow replacing or removing the selection before onboarding is completed.
+- Make the photo optional; users must be able to skip this step.
+- Preserve the existing onboarding flow, including mobile-number authentication and other required profile fields.
+
+Do not request broad photo-library permissions when the platform picker can provide the selected image without them.
+
+Handle permission denial, cancellation, limited photo-library access, invalid files, network failures and upload errors gracefully.
+
+### Upload behavior
+
+If the user selects a photo:
+
+1. Validate the image locally.
+2. Request an authorized upload session from the backend.
+3. Upload the image to private S3 using the existing media service.
+4. Finalize the upload.
+5. Associate the resulting validated object with the authenticated user's profile.
+6. Persist the profile update on the backend.
+7. Display the final image after successful confirmation.
+
+Do not mark the profile update as complete if the upload or metadata update fails.
+
+If the user skips the step, complete onboarding without a photo and display the standard fallback avatar.
+
+Do not leave orphaned profile-photo objects after failed onboarding attempts. Reuse the existing cleanup mechanism or add appropriate cleanup handling.
+
+## 4. Profile page and profile editing
+
+Update the current Profile screen to support complete photo management.
+
+The user must be able to:
+
+- View their current profile photo.
+- Tap it to open the full-screen viewer.
+- Change the photo.
+- Take a new photo where supported.
+- Select a replacement from the photo library.
+- Crop or adjust the selected image.
+- Remove the current photo.
+- Cancel an edit without changing the saved photo.
+
+Provide upload progress, save state, retry behavior, error messages and confirmation for removal where appropriate.
+
+Do not upload a new image on every picker interaction. Upload only when the user confirms the intended change.
+
+If a replacement upload fails, preserve the existing profile photo.
+
+After a successful change, update the profile in all relevant screens without requiring an app restart.
+
+## 5. User profile-photo viewer
+
+Implement a reusable full-screen profile-photo viewer.
+
+### Interaction
+
+When a user taps a visible personal avatar in the application, open the viewer where appropriate.
+
+Support these entry points:
+
+- Chat list avatars.
+- Direct conversation header avatars.
+- Sender avatars in conversations where displayed.
+- Member avatars in group information.
+- User profile screens.
+- User search/contact results.
+- Other existing UI locations that display a personal avatar.
+
+The viewer should:
+
+- Display the full available image against a dark, uncluttered background.
+- Respect safe areas and device navigation gestures.
+- Provide a clear close/back action.
+- Support pinch-to-zoom and pan if this can be implemented with existing Expo-compatible dependencies.
+- Show a loading state while retrieving the image.
+- Show a graceful fallback if no photo exists.
+- Show a retry option when loading fails.
+- Avoid opening the viewer when an adjacent message row or navigation action is tapped unintentionally.
+
+Do not implement profile-photo view counts or imply that users can see who viewed their photo. WhatsApp does not provide a profile-photo viewer list.
+
+### Own photo versus another user's photo
+
+For the authenticated user's own photo, offer an Edit or Change photo action.
+
+For another user's photo, provide viewing only unless an existing authorized administrative capability explicitly permits editing.
+
+Never let a client change another user's profile photo.
+
+## 6. WhatsApp-style profile-photo privacy
+
+Inspect the existing privacy settings and contact-discovery implementation.
+
+Implement a profile-photo visibility policy that is enforced by the backend, not just by the frontend.
+
+Support these privacy options where the existing account and contact model can enforce them correctly:
+
+- Everyone.
+- My Contacts.
+- My Contacts Except.
+- Nobody.
+
+Use the existing privacy-settings infrastructure if available.
+
+### Contact privacy requirements
+
+The app must not pretend it knows a user's entire address book if the contacts are only stored locally.
+
+- Reuse actual, trustworthy server-side contact relationships where they exist.
+- Do not persist entire uploaded address books merely to support profile-photo visibility.
+- If a My Contacts Except list is implemented, store only the necessary exclusion identifiers and enforce it server-side.
+- Do not infer contact ownership from a client-supplied boolean or arbitrary phone number.
+- If the existing architecture cannot support a privacy option correctly, implement the supported choices first and document the missing prerequisite rather than exposing a misleading control.
+
+Apply the visibility policy consistently to profile data endpoints and photo-download authorization.
+
+### Blocking and privacy
+
+Respect the existing block/privacy model.
+
+A blocked user must not regain access to profile photos through a separate image endpoint.
+
+Handle deleted photos, missing photos, unavailable accounts and stale cached URLs gracefully.
+
+Do not expose a permanent public S3 URL that bypasses future privacy changes.
+
+Profile-photo visibility must be rechecked before issuing new download access. Keep presigned URLs short-lived and document that already-issued URLs remain usable until expiry unless access or object conditions change.
+
+## 7. Group photos
+
+Allow a group to have a custom image or fall back to a generated group avatar.
+
+### Group creation
+
+In the existing Create Group flow:
+
+- Show a group-photo placeholder.
+- Allow the creator to choose an image before creating the group.
+- Allow taking a photo where supported.
+- Preview the selected image.
+- Allow skipping the photo.
+- Upload and associate the image using the shared S3 media service.
+
+The group must still be creatable without a photo.
+
+Ensure the group and its initial metadata are created consistently. Avoid leaving a partially created group if the photo upload or group creation fails.
+
+### Group details screen
+
+Display the group image prominently.
+
+When the user taps it:
+
+- Open the full-screen group-image viewer.
+- If the current user is authorized to edit group information, show Change photo and Remove photo actions.
+- Otherwise, allow viewing only.
+
+Use the existing group role and permissions model.
+
+Enforce group-image changes on the backend according to the existing group-info permission setting and owner/admin policy.
+
+### Group image updates
+
+When the group image changes:
+
+- Update the group details screen.
+- Update the Chats list avatar.
+- Update the group conversation header.
+- Update any other group-image references.
+- Propagate the change through the existing query-cache invalidation or real-time event mechanism.
+- Avoid duplicate group update events.
+- Handle stale caches and failed uploads.
+
+Removing the image should restore the default group-avatar fallback.
+
+## 8. Broadcast-list images
+
+Allow each broadcast list to have its own custom image.
+
+### Creation
+
+In the Create Broadcast List screen:
+
+- Show a circular placeholder.
+- Allow selecting an image.
+- Preview the image before creation.
+- Allow skipping the image.
+- Upload and associate the image when the list is saved.
+
+The list must remain creatable without a photo.
+
+### List details and editing
+
+In the broadcast-list details screen:
+
+- Display the list image.
+- Allow the owner to change or remove it.
+- Use the existing shared image picker, cropper, upload service and viewer.
+- Confirm consequential changes when appropriate.
+
+### Chats/Broadcast tab
+
+Update the broadcast-list row to show the custom image.
+
+When the image changes, update the relevant query cache and screen state.
+
+Do not create a separate group-like membership model for broadcast-list images. Only the authenticated list owner may edit the list image.
+
+A broadcast-list image is private list metadata; do not expose it to message recipients through recipient-specific direct chats.
+
+## 9. Shared image component and viewer architecture
+
+Create or extend a reusable image system.
+
+Use the actual repository conventions, but the implementation should provide equivalent functionality to:
+
+- `Avatar`: displays a user, group or broadcast-list image with the appropriate fallback.
+- `AvatarPressable`: opens the relevant viewer when the avatar is actionable.
+- `ProfilePhotoViewer`: displays a personal profile photo.
+- `ConversationImageViewer`: displays group or broadcast-list images.
+- `ProfilePhotoEditor`: handles selection, preview, cropping, upload and confirmation.
+- A shared media service for authorized upload and retrieval.
+
+Do not blindly create every component if equivalent reusable components already exist. Extend the existing implementation where possible.
+
+The image component must:
+
+- Support local preview URIs and authorized remote image URLs.
+- Avoid rendering invalid or expired URLs indefinitely.
+- Support loading and error states.
+- Use stable image identities and cache invalidation.
+- Display accessible fallback initials or an icon.
+- Use consistent circular cropping and sizing.
+- Avoid unnecessary downloads and repeated presigned URL requests.
+- Avoid displaying the wrong user's cached photo after account switching.
+
+Do not use `AsyncImage` or arbitrary remote image lookup. Use the existing application networking and image-rendering stack.
+
+## 10. Storage architecture
+
+Use private S3 object storage with backend-generated object keys.
+
+Keep personal profile photos, group images and broadcast-list images logically separated from ordinary message attachments.
+
+For example, use distinct namespaces such as:
+
+- `profile-photos/...`
+- `group-photos/...`
+- `broadcast-list-photos/...`
+
+Use opaque identifiers in keys and avoid embedding phone numbers or other unnecessary personal information.
+
+The exact storage structure should follow the existing media service conventions.
+
+Do not create public object ACLs.
+
+Do not place AWS credentials or long-lived S3 URLs in the frontend.
+
+Use the existing upload-session and finalization APIs if implemented. Extend them with a validated purpose or resource type if necessary.
+
+Enforce authorization for every image upload, replacement, removal and download.
+
+## 11. Database changes
+
+Inspect the actual schema first.
+
+Add or reuse the necessary image-reference fields for:
+
+- User profile photo.
+- Group image.
+- Broadcast-list image.
+
+Prefer storing stable object keys or attachment/resource identifiers instead of permanent presigned URLs.
+
+The backend should generate short-lived authorized URLs when needed.
+
+Do not reuse `message_attachments` by creating fake chat messages for profile photos.
+
+If a generic media-resource model already exists, extend it appropriately. Otherwise, implement the smallest coherent schema change.
+
+Add appropriate foreign keys, constraints, indexes, deletion behavior and migrations.
+
+Handle object cleanup safely:
+
+- Replacing a photo must not delete the new object.
+- A failed update must preserve the old photo.
+- Removing a photo must clear the relevant database reference.
+- Delete old S3 objects only when they are no longer referenced and the cleanup policy permits it.
+- Never delete a group/list image while another valid resource still references the same object.
+- Make cleanup idempotent.
+
+Do not silently destroy production data or modify applied migrations without a safe migration strategy.
+
+## 12. Backend APIs and authorization
+
+Implement the endpoints using the existing Fastify route and service conventions.
+
+The feature must support:
+
+- Uploading or finalizing a personal profile photo.
+- Updating a user's profile-photo reference.
+- Removing a personal profile photo.
+- Fetching authorized profile-photo metadata.
+- Requesting authorized photo-download access.
+- Updating/removing a group image.
+- Updating/removing a broadcast-list image.
+- Enforcing privacy and role restrictions.
+
+The exact routes should follow existing project conventions.
+
+Never trust client-supplied owner IDs, user IDs, group roles or authorization flags.
+
+Derive the acting user from authenticated server state.
+
+Use request validation, rate limits, upload size limits and safe errors.
+
+Do not return raw AWS errors, secret values, full presigned URLs in logs or unnecessary private metadata.
+
+## 13. Image processing and quality
+
+Implement reasonable image constraints.
+
+- Accept common image formats supported by the app.
+- Validate actual uploaded content where practical.
+- Reject unsupported formats and oversized images.
+- Preserve a suitable source image for full-screen viewing.
+- Generate an optimized avatar version or thumbnail where appropriate.
+- Avoid uploading excessively large images when a smaller avatar is sufficient.
+- Preserve reasonable image quality.
+- Do not require a native image-processing dependency that breaks Expo Go.
+
+If image processing requires a server-side worker, use the existing backend architecture or a documented background-processing mechanism.
+
+If full image processing cannot be implemented safely in this pass, implement client-side resizing using Expo-compatible tools and clearly document the limitation.
+
+Do not claim a thumbnail or optimized variant exists unless it is generated and stored.
+
+## 14. UI consistency and safe areas
+
+Use the existing Broadcast design system as the single source of truth.
+
+Inspect and reuse existing theme tokens and shared components, including the actual equivalents of:
+
+- `src/theme/colors.ts`
+- `src/theme/typography.ts`
+- `src/theme/spacing.ts`
+- `src/theme/radius.ts`
+- `src/theme/sizes.ts`
+- `src/theme/index.ts`
+
+Keep the established visual direction:
+
+- White primary backgrounds.
+- Near-black text.
+- Restrained green accents.
+- Consistent spacing and typography.
+- Native-feeling transitions.
+- Appropriate touch targets.
+- Correct safe-area handling on iOS and Android.
+
+The full-screen image viewer should feel natural on both platforms, including correct status-bar behavior, back navigation and modal dismissal.
+
+Do not hardcode device dimensions.
+
+## 15. Regression and edge cases
+
+Handle:
+
+- User skips the onboarding photo.
+- User removes their photo.
+- User cancels photo selection.
+- Upload failure during onboarding.
+- Replacement upload failure.
+- Expired presigned URL.
+- Image download failure.
+- Missing or deleted image.
+- User blocks another user.
+- Privacy settings change while the app is open.
+- User logs out or switches accounts.
+- Group permissions deny an image update.
+- Group is deleted during upload.
+- Broadcast list is deleted during upload.
+- Concurrent photo updates.
+- Stale query-cache data.
+- Duplicate update requests.
+- Slow network and retry.
+- Camera or photo-library permission denial.
+- An image viewer opened from a nested pressable.
+- Multiple avatars representing the same user in different screens.
+
+Do not silently overwrite an existing photo on failure.
+
+## 16. Tests
+
+Add backend and frontend tests using existing test conventions.
+
+### Backend tests
+
+- Authenticated profile-photo update.
+- Unauthorized profile-photo update rejection.
+- Profile-photo removal.
+- Privacy-aware photo access.
+- Block-aware access.
+- Group image update with correct permissions.
+- Group image update denied to unauthorized members.
+- Broadcast-list image update by owner.
+- Unauthorized list image update rejection.
+- Safe old-object cleanup.
+- Expired or invalid upload session rejection.
+- Cross-account photo access rejection.
+
+### Frontend tests
+
+- Onboarding photo selection and skip.
+- Profile photo change and removal.
+- Preview and cancel behavior.
+- Upload progress and retry.
+- Avatar opens viewer.
+- Viewer closes correctly.
+- Missing photo fallback.
+- Group image creation and editing.
+- Broadcast-list image creation and editing.
+- Updated image appears in Chats, group headers and list rows.
+- Privacy-aware fallback behavior.
+- Account switching does not leak cached images.
+- Expo Go compatibility.
+
+Do not claim that security checks pass based only on frontend visibility controls. Verify server-side authorization.
+
+## 17. Final verification
+
+After implementation:
+
+1. Run frontend lint, typecheck and tests.
+2. Run backend lint, typecheck and tests using the actual package scripts.
+3. Run database migration checks.
+4. Test real image upload and retrieval through the private S3 bucket where credentials are available.
+5. Verify that profile-photo URLs are not publicly accessible without authorization.
+6. Verify group and broadcast-list role restrictions.
+7. Verify that photo changes propagate across all relevant screens.
+8. Verify the feature in Expo Go.
+9. Inspect the final diff for credentials, permanent public URLs, unauthorized access and broken media flows.
+10. Fix implementation-related failures.
+
+Do not claim a test passed unless it was actually run and succeeded.
+
+## 18. Final report
+
+Provide:
+
+- Summary of implemented behavior.
+- Files created, modified and removed.
+- Database migrations.
+- APIs added or modified.
+- S3 storage and authorization design.
+- Profile-photo privacy behavior.
+- Group/list permission rules.
+- Exact setup and test commands.
+- Actual test results.
+- Expo Go compatibility verification.
+- Any remaining limitations.
+
+The final result must allow users to set, replace, view and remove personal profile photos during onboarding and later from their profile; allow authorized users to set group and broadcast-list images; and open any permitted avatar or conversation image in a polished full-screen viewer.

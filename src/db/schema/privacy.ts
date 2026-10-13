@@ -44,6 +44,11 @@ export const blockedUsers = pgTable(
   ],
 );
 
+// Who may see a user's profile photo. "My contacts" isn't offered: the
+// server keeps no contact relationships (address books stay on-device), so
+// it couldn't be enforced.
+export const profilePhotoVisibility = pgEnum("profile_photo_visibility", ["everyone", "nobody"]);
+
 // Rows are created automatically when a user is inserted.
 // updated_at is maintained by the set_updated_at() trigger.
 export const privacySettings = pgTable(
@@ -57,6 +62,10 @@ export const privacySettings = pgTable(
     showTypingIndicator: boolean("show_typing_indicator").notNull().default(true),
 
     allowGroupInvites: boolean("allow_group_invites").notNull().default(true),
+
+    profilePhotoVisibility: profilePhotoVisibility("profile_photo_visibility")
+      .notNull()
+      .default("everyone"),
 
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },

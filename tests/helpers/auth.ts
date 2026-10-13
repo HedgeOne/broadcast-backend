@@ -34,6 +34,7 @@ export async function createTestApp(
     logger?: FastifyBaseLogger;
     contacts?: BuildAppOptions["contacts"];
     chats?: BuildAppOptions["chats"];
+    notifications?: BuildAppOptions["notifications"];
   } = {},
 ): Promise<TestContext> {
   if (redis.status !== "ready") {
@@ -46,6 +47,9 @@ export async function createTestApp(
     logger: options.logger,
     ...(options.contacts ? { contacts: options.contacts } : {}),
     ...(options.chats ? { chats: options.chats } : {}),
+    // Pushing on commit would race the TRUNCATE in resetState; suites that
+    // exercise delivery opt in explicitly.
+    notifications: options.notifications ?? { settings: { processOnCommit: false } },
   });
   await app.ready();
   return { app, otp };

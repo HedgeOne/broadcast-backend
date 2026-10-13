@@ -100,6 +100,13 @@ export const messages = pgTable(
       .on(t.senderDeviceId, t.clientMessageId)
       .where(sql`${t.senderDeviceId} IS NOT NULL`),
     index("messages_chat_sequence_idx").on(t.chatId, t.sequence.desc().nullsFirst()),
+    // Shared media and documents in a conversation, newest first.
+    index("messages_chat_media_idx")
+      .on(t.chatId, t.sequence.desc().nullsFirst())
+      .where(sql`${t.type} IN ('image', 'video', 'audio') AND ${t.deletedAt} IS NULL`),
+    index("messages_chat_documents_idx")
+      .on(t.chatId, t.sequence.desc().nullsFirst())
+      .where(sql`${t.type} = 'document' AND ${t.deletedAt} IS NULL`),
     index("messages_sender_idx").on(t.senderId),
     index("messages_reply_idx").on(t.replyToMessageId),
     index("messages_expires_idx")
@@ -184,6 +191,9 @@ export const starredMessages = pgTable(
       columns: [t.messageId],
       foreignColumns: [messages.id],
     }).onDelete("cascade"),
+
+    // Unstarring every copy of a broadcast, and the cascade on delete.
+    index("starred_messages_message_idx").on(t.messageId),
   ],
 );
 

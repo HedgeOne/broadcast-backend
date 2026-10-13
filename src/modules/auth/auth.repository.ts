@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "../../db/client.js";
 import { devices, sessions, users, type Device, type User } from "../../db/schema/index.js";
@@ -200,6 +200,26 @@ export class AuthRepository {
       .update(sessions)
       .set({ revokedAt: sql`now()` })
       .where(and(eq(sessions.deviceId, deviceId), isNull(sessions.revokedAt)));
+  }
+
+  // A signed-out device must stop receiving the account's notifications
+  // even if the app couldn't unregister its token itself.
+  async revokePushTokens(target: { deviceId: string } | { userId: string }): Promise<void> {
+    await this.db
+      .update(devices)
+      .set({
+        pushToken: null,
+        pushTokenRevokedAt: sql`now()`,
+        pushTokenRevokedReason: "logout",
+      })
+      .where(
+        and(
+          "deviceId" in target
+            ? eq(devices.id, target.deviceId)
+            : eq(devices.userId, target.userId),
+          isNotNull(devices.pushToken),
+        ),
+      );
   }
 
   async revokeSessionsForUser(userId: string): Promise<number> {

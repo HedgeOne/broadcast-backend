@@ -10,6 +10,10 @@ import { logger } from "./lib/logger.js";
 import { authModule, type AuthModuleOptions } from "./modules/auth/index.js";
 import { chatsModule, type ChatsModuleOptions } from "./modules/chats/index.js";
 import { contactsModule, type ContactsModuleOptions } from "./modules/contacts/index.js";
+import {
+  notificationsModule,
+  type NotificationsModuleOptions,
+} from "./modules/notifications/index.js";
 import { privacyModule } from "./modules/privacy/index.js";
 import { usersModule } from "./modules/users/index.js";
 import { realtimeModule } from "./realtime/index.js";
@@ -19,6 +23,7 @@ export interface BuildAppOptions {
   auth?: AuthModuleOptions;
   contacts?: ContactsModuleOptions;
   chats?: ChatsModuleOptions;
+  notifications?: NotificationsModuleOptions;
   logger?: FastifyBaseLogger | undefined;
 }
 
@@ -56,6 +61,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(realtimeModule);
   await app.register(usersModule);
   await app.register(contactsModule, options.contacts ?? {});
+  await app.register(notificationsModule, options.notifications ?? {});
   await app.register(chatsModule, options.chats ?? {});
   await app.register(privacyModule);
 

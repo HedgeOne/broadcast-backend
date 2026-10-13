@@ -7,6 +7,8 @@ import type { RealtimePublisher } from "../../realtime/index.js";
 import { insertSystemMessage, type Tx } from "../chats/chat-tx.js";
 import type { ChatsRepository } from "../chats/chats.repository.js";
 import type { ChatSummary } from "../chats/chats.types.js";
+import { claimPhoto } from "../media/media.repository.js";
+import type { PhotoRef } from "../media/media.schemas.js";
 import { toMessageDto } from "../messages/messages.types.js";
 import { groupErrors } from "./groups.errors.js";
 import { can, canActOn, isAdmin, type GroupSettings } from "./groups.policy.js";
@@ -150,6 +152,10 @@ export class GroupsService {
         memberIds,
       });
       if (!id) return undefined;
+      if (body.photo) {
+        await claimPhoto(tx, userId, "group_photo", body.photo);
+        await this.repo.setPhoto(tx, id, body.photo);
+      }
       await this.system(tx, id, effects, {
         kind: "group.created",
         actorId: userId,
@@ -177,17 +183,17 @@ export class GroupsService {
 
     const admin = isAdmin(role);
     const [members, createdBy, invite, pendingRequests] = await Promise.all([
-      this.repo.members(this.repo.executor, chatId),
+      this.repo.members(this.repo.executor, chatId, userId),
       this.repo.creatorOf(this.repo.executor, chatId),
       admin ? this.repo.activeInvite(this.repo.executor, chatId) : Promise.resolve(null),
-      admin ? this.repo.pendingRequests(this.repo.executor, chatId) : Promise.resolve(null),
+      admin ? this.repo.pendingRequests(this.repo.executor, chatId, userId) : Promise.resolve(null),
     ]);
 
     return {
       chatId,
       name: group.name,
       description: group.description,
-      avatarUrl: null,
+      photoId: group.photoUploadId,
       createdAt: group.createdAt.toISOString(),
       createdBy,
       myRole: role,
@@ -225,6 +231,46 @@ export class GroupsService {
         actorId: userId,
         name: name ?? null,
         descriptionChanged: description !== undefined,
+      });
+    });
+    return this.details(userId, chatId);
+  }
+
+  // Whoever may edit the group's info may change its photo. Setting the
+  // current photo again (a retried request) changes nothing.
+  async setPhoto(userId: string, chatId: string, photo: PhotoRef): Promise<GroupDetails> {
+    await this.mutate(chatId, userId, async (tx, { group, settings, actor }, effects) => {
+      this.require(can("editInfo", actor.role, settings), "editInfo");
+      if (
+        group.photoUploadId === photo.uploadId &&
+        group.photoThumbnailUploadId === photo.thumbnailUploadId
+      ) {
+        return;
+      }
+      await claimPhoto(tx, userId, "group_photo", photo);
+      await this.repo.setPhoto(tx, chatId, photo);
+      effects.updated = true;
+      await this.system(tx, chatId, effects, {
+        kind: "photo.changed",
+        actorId: userId,
+        removed: false,
+      });
+    });
+    return this.details(userId, chatId);
+  }
+
+  // Back to the generated fallback. Removing when there is no photo is a
+  // no-op.
+  async removePhoto(userId: string, chatId: string): Promise<GroupDetails> {
+    await this.mutate(chatId, userId, async (tx, { group, settings, actor }, effects) => {
+      this.require(can("editInfo", actor.role, settings), "editInfo");
+      if (group.photoUploadId === null) return;
+      await this.repo.setPhoto(tx, chatId, null);
+      effects.updated = true;
+      await this.system(tx, chatId, effects, {
+        kind: "photo.changed",
+        actorId: userId,
+        removed: true,
       });
     });
     return this.details(userId, chatId);

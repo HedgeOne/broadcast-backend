@@ -5,11 +5,19 @@ import { blockedUsers, chatMembers, users, type User } from "../../db/schema/ind
 import type { GroupRole } from "../groups/groups.policy.js";
 import type { SystemEvent } from "../groups/groups.types.js";
 import type { MessageDto } from "../messages/messages.types.js";
-import { activeMemberIds, type Executor } from "./chat-tx.js";
+import { photoIdFor } from "../photos/photos.access.js";
+import { activeMemberIds, findOrCreateDirectChat, type Executor } from "./chat-tx.js";
+import type { MuteDuration } from "./chats.schemas.js";
 import type { ChatSummary } from "./chats.types.js";
 
 // The far-future timestamp stored for "muted until unmuted".
 const MUTED_FOREVER = "9999-12-31T00:00:00Z";
+
+const MUTE_UNTIL: Record<MuteDuration, SQL> = {
+  "8h": sql`NOW() + interval '8 hours'`,
+  "1w": sql`NOW() + interval '7 days'`,
+  always: sql`${MUTED_FOREVER}::timestamptz`,
+};
 
 // Raw queries bypass Drizzle's column mapping and the driver returns
 // timestamps as Postgres text, so format them as ISO-8601 UTC in SQL.
@@ -22,17 +30,22 @@ interface SummaryRow extends Record<string, unknown> {
   type: "direct" | "group";
   created_at: string;
   my_read: string;
+  cleared_through: string;
+  cleared_at: string | null;
   my_role: GroupRole;
   muted: boolean;
+  muted_until: string | null;
   peer_id: string | null;
   peer_name: string | null;
   peer_status: User["status"] | null;
+  peer_photo_id: string | null;
   peer_delivered: string | null;
   peer_read: string | null;
   receipts_visible: boolean;
   blocked_by_me: boolean;
   g_name: string | null;
   g_description: string | null;
+  g_photo_id: string | null;
   g_edit_info: boolean | null;
   g_message: boolean | null;
   g_add_members: boolean | null;
@@ -72,10 +85,12 @@ function lastMessageOf(row: SummaryRow): MessageDto | null {
     type: row.m_type,
     ciphertext: deleted || !row.m_ciphertext ? "" : row.m_ciphertext.toString("base64"),
     createdAt: row.m_created_at,
-    // Previews don't render quotes or reactions.
+    // Previews don't render quotes, reactions or files; the type names the
+    // kind of media ("Photo", "Video", …).
     replyTo: null,
     mentions: deleted ? [] : (row.m_mentions ?? []),
     reactions: [],
+    attachment: null,
     system: row.m_system,
     deleted,
     deletedBy: row.m_deleted_by,
@@ -91,9 +106,11 @@ function toSummary(row: SummaryRow): ChatSummary {
     lastSequence,
     unreadCount: Number(row.unread),
     muted: row.muted,
+    mutedUntil: row.muted_until,
     lastReadSequence: Number(row.my_read),
+    clearedThroughSequence: Number(row.cleared_through),
     createdAt: row.created_at,
-    lastActivityAt: row.m_created_at ?? row.created_at,
+    lastActivityAt: row.m_created_at ?? row.cleared_at ?? row.created_at,
   };
 
   if (row.type === "group") {
@@ -103,7 +120,7 @@ function toSummary(row: SummaryRow): ChatSummary {
       group: {
         name: row.g_name ?? "",
         description: row.g_description,
-        avatarUrl: null,
+        photoId: row.g_photo_id,
         memberCount: Number(row.g_member_count ?? 1),
         myRole: row.my_role,
         settings: {
@@ -130,6 +147,7 @@ function toSummary(row: SummaryRow): ChatSummary {
       displayName: row.peer_name,
       available: row.peer_status === "active",
       blockedByMe: row.blocked_by_me,
+      photoId: row.peer_photo_id,
     },
     peerDeliveredSequence: Number(row.peer_delivered ?? 0),
     peerReadSequence: row.receipts_visible ? Number(row.peer_read ?? 0) : null,
@@ -170,11 +188,17 @@ export class ChatsRepository {
         c.type,
         ${isoTimestamp(sql`c.created_at`)} AS created_at,
         me.last_read_sequence AS my_read,
+        me.cleared_through_sequence AS cleared_through,
+        CASE WHEN me.cleared_at IS NULL THEN NULL
+             ELSE ${isoTimestamp(sql`me.cleared_at`)} END AS cleared_at,
         me.role AS my_role,
         (me.muted_until IS NOT NULL AND me.muted_until > NOW()) AS muted,
+        CASE WHEN me.muted_until > NOW() AND me.muted_until < ${MUTED_FOREVER}::timestamptz
+          THEN ${isoTimestamp(sql`me.muted_until`)} END AS muted_until,
         peer.user_id AS peer_id,
         pu.display_name AS peer_name,
         pu.status AS peer_status,
+        ${photoIdFor(sql`pu`, userId)} AS peer_photo_id,
         peer.last_delivered_sequence AS peer_delivered,
         peer.last_read_sequence AS peer_read,
         (COALESCE(pp.show_read_receipts, TRUE) AND COALESCE(mp.show_read_receipts, TRUE))
@@ -185,6 +209,7 @@ export class ChatsRepository {
         )) AS blocked_by_me,
         g.name AS g_name,
         g.description AS g_description,
+        g.photo_upload_id AS g_photo_id,
         g.only_admins_can_edit_info AS g_edit_info,
         g.only_admins_can_message AS g_message,
         g.only_admins_can_add_members AS g_add_members,
@@ -248,8 +273,12 @@ export class ChatsRepository {
           OR (c.type = 'group' AND g.chat_id IS NOT NULL AND g.deleted_at IS NULL)
         )
         ${options.chatId ? sql`AND c.id = ${options.chatId}` : sql``}
-        ${options.includeEmpty ? sql`` : sql`AND (lm.id IS NOT NULL OR c.type = 'group')`}
-      ORDER BY COALESCE(lm.created_at, c.created_at) DESC, c.id
+        ${
+          options.includeEmpty
+            ? sql``
+            : sql`AND (lm.id IS NOT NULL OR c.type = 'group' OR me.cleared_at IS NOT NULL)`
+        }
+      ORDER BY COALESCE(lm.created_at, me.cleared_at, c.created_at) DESC, c.id
     `);
     return result.rows.map(toSummary);
   }
@@ -297,40 +326,7 @@ export class ChatsRepository {
   // memberships) if needed. direct_chat_pair_unique makes concurrent calls
   // converge on one row.
   async findOrCreateDirectChat(userId: string, otherId: string): Promise<string> {
-    return this.db.transaction(async (tx) => {
-      const inserted = await tx.execute<{ id: string }>(sql`
-        INSERT INTO chats (type, created_by, direct_user_a_id, direct_user_b_id)
-        VALUES ('direct', ${userId}, LEAST(${userId}::uuid, ${otherId}::uuid),
-                GREATEST(${userId}::uuid, ${otherId}::uuid))
-        ON CONFLICT (LEAST(direct_user_a_id, direct_user_b_id),
-                     GREATEST(direct_user_a_id, direct_user_b_id))
-          WHERE type = 'direct'
-        DO NOTHING
-        RETURNING id
-      `);
-
-      let chatId = inserted.rows[0]?.id;
-      if (!chatId) {
-        const existing = await tx.execute<{ id: string }>(sql`
-          SELECT id FROM chats
-          WHERE type = 'direct'
-            AND LEAST(direct_user_a_id, direct_user_b_id) = LEAST(${userId}::uuid, ${otherId}::uuid)
-            AND GREATEST(direct_user_a_id, direct_user_b_id) = GREATEST(${userId}::uuid, ${otherId}::uuid)
-        `);
-        chatId = existing.rows[0]?.id;
-      }
-      if (!chatId) throw new Error("direct chat vanished after conflict");
-
-      await tx
-        .insert(chatMembers)
-        .values([
-          { chatId, userId },
-          { chatId, userId: otherId },
-        ])
-        .onConflictDoNothing();
-
-      return chatId;
-    });
+    return this.db.transaction((tx) => findOrCreateDirectChat(tx, userId, otherId));
   }
 
   // The caller's active membership; undefined for non-members and deleted
@@ -380,10 +376,11 @@ export class ChatsRepository {
     return activeMemberIds(this.db, chatId);
   }
 
-  async setMuted(userId: string, chatId: string, muted: boolean): Promise<boolean> {
+  // Expiry comes from the database clock, never the client's.
+  async setMute(userId: string, chatId: string, duration: MuteDuration | null): Promise<boolean> {
     const updated = await this.db
       .update(chatMembers)
-      .set({ mutedUntil: muted ? new Date(MUTED_FOREVER) : null })
+      .set({ mutedUntil: duration === null ? null : MUTE_UNTIL[duration] })
       .where(
         and(
           eq(chatMembers.chatId, chatId),

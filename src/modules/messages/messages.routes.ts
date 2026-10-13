@@ -2,10 +2,13 @@ import type { FastifyPluginCallback } from "fastify";
 
 import { chatParams } from "../chats/chats.schemas.js";
 import {
+  clearChatBody,
   listMessagesQuery,
   messageParams,
   reactionBody,
   sendMessageBody,
+  sharedQuery,
+  starredQuery,
 } from "./messages.schemas.js";
 import type { MessagesService } from "./messages.service.js";
 
@@ -49,6 +52,36 @@ export const messagesRoutes: FastifyPluginCallback<MessagesRoutesOptions> = (
   app.delete("/:chatId/messages/:messageId/reaction", async (request) => {
     const { chatId, messageId } = messageParams.parse(request.params);
     return service.react(request.auth.userId, chatId, messageId, null);
+  });
+
+  // Stars belong to the authenticated user; both are idempotent.
+  app.put("/:chatId/messages/:messageId/star", async (request) => {
+    const { chatId, messageId } = messageParams.parse(request.params);
+    return service.star(request.auth.userId, chatId, messageId, true);
+  });
+
+  app.delete("/:chatId/messages/:messageId/star", async (request) => {
+    const { chatId, messageId } = messageParams.parse(request.params);
+    return service.star(request.auth.userId, chatId, messageId, false);
+  });
+
+  app.get("/:chatId/starred", async (request) => {
+    const { chatId } = chatParams.parse(request.params);
+    const query = starredQuery.parse(request.query);
+    return service.starred(request.auth.userId, chatId, query);
+  });
+
+  app.get("/:chatId/shared", async (request) => {
+    const { chatId } = chatParams.parse(request.params);
+    const query = sharedQuery.parse(request.query);
+    return service.shared(request.auth.userId, chatId, query);
+  });
+
+  // Clears the caller's own view of the chat; idempotent.
+  app.post("/:chatId/clear", async (request) => {
+    const { chatId } = chatParams.parse(request.params);
+    const { keepStarred } = clearChatBody.parse(request.body);
+    return service.clear(request.auth.userId, chatId, keepStarred);
   });
 
   done();

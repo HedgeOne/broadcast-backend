@@ -1,5 +1,6 @@
 import type { FastifyPluginCallback } from "fastify";
 
+import { AppError } from "../../lib/errors.js";
 import { authErrors } from "../auth/auth.errors.js";
 import { toPublicUser } from "../auth/auth.types.js";
 import { chatErrors } from "../chats/chats.errors.js";
@@ -31,6 +32,18 @@ export const usersRoutes: FastifyPluginCallback<UsersRoutesOptions> = (
     const user = await repository.findProfile(request.auth.userId, userId);
     if (!user) throw chatErrors.userNotFound();
     return { user };
+  });
+
+  // For another person's contact page: groups the caller shares with them.
+  app.get("/:userId/groups-in-common", { preHandler: app.authenticate }, async (request) => {
+    const { userId } = userParams.parse(request.params);
+    if (userId === request.auth.userId) {
+      throw new AppError(400, "INVALID_USER", "Choose someone other than yourself.");
+    }
+    if (!(await repository.findProfile(request.auth.userId, userId))) {
+      throw chatErrors.userNotFound();
+    }
+    return { groups: await repository.groupsInCommon(request.auth.userId, userId) };
   });
 
   done();

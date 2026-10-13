@@ -1,11 +1,35 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "../../db/client.js";
-import { blockedUsers, userReports, users } from "../../db/schema/index.js";
-import type { ReportBody } from "./privacy.schemas.js";
+import { blockedUsers, privacySettings, userReports, users } from "../../db/schema/index.js";
+import type { ReportBody, UpdateSettingsBody } from "./privacy.schemas.js";
+
+// The privacy settings a client can read and change.
+export interface PrivacySettingsDto {
+  profilePhotoVisibility: "everyone" | "nobody";
+}
 
 export class PrivacyRepository {
   constructor(private readonly db: Database) {}
+
+  // The row is normally created with the user; the upsert means reading
+  // never fails if it is missing.
+  async settings(userId: string): Promise<PrivacySettingsDto> {
+    const [row] = await this.db
+      .insert(privacySettings)
+      .values({ userId })
+      .onConflictDoUpdate({ target: privacySettings.userId, set: { userId } })
+      .returning();
+    return { profilePhotoVisibility: row?.profilePhotoVisibility ?? "everyone" };
+  }
+
+  async updateSettings(userId: string, update: UpdateSettingsBody): Promise<PrivacySettingsDto> {
+    await this.db
+      .insert(privacySettings)
+      .values({ userId, ...update })
+      .onConflictDoUpdate({ target: privacySettings.userId, set: update });
+    return this.settings(userId);
+  }
 
   async userExists(userId: string): Promise<boolean> {
     const [row] = await this.db.select({ id: users.id }).from(users).where(eq(users.id, userId));

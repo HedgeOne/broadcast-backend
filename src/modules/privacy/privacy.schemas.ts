@@ -2,6 +2,17 @@ import { z } from "zod";
 
 export const blockParams = z.object({ userId: z.uuid() });
 
+// Only settings the server can enforce are offered. Profile photos: there
+// are no server-side contact relationships, so "my contacts" can't be.
+export const updateSettingsBody = z
+  .object({
+    profilePhotoVisibility: z.enum(["everyone", "nobody"]).optional(),
+  })
+  .strict()
+  .refine((body) => body.profilePhotoVisibility !== undefined, {
+    message: "Provide a setting to change.",
+  });
+
 // A report concerns a user, a conversation (e.g. a group), or a specific
 // message in a conversation. A message report targets its sender.
 export const reportBody = z
@@ -22,3 +33,4 @@ export const reportBody = z
   });
 
 export type ReportBody = z.infer<typeof reportBody>;
+export type UpdateSettingsBody = z.infer<typeof updateSettingsBody>;

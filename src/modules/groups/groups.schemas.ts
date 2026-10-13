@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { photoRef } from "../media/media.schemas.js";
+
 export const GROUP_NAME_MAX = 100;
 export const GROUP_DESCRIPTION_MAX = 512;
 const MAX_BATCH = 256;
@@ -32,6 +34,9 @@ export const createGroupBody = z.object({
   name: groupName,
   description: groupDescription.nullable().optional(),
   memberIds: userIds,
+  // Optional; claimed in the same transaction, so an unusable photo fails
+  // the whole creation rather than leaving a half-made group.
+  photo: photoRef.optional(),
 });
 
 export const updateGroupBody = z

@@ -9,6 +9,7 @@ import {
   type Executor,
   type Tx,
 } from "../chats/chat-tx.js";
+import { photoIdFor } from "../photos/photos.access.js";
 import { groupErrors } from "./groups.errors.js";
 import type { GroupRole, GroupSettings } from "./groups.policy.js";
 import type { GroupMemberDto, InviteLinkDto, JoinRequestDto } from "./groups.types.js";
@@ -252,7 +253,7 @@ export class GroupsRepository {
           left_at = NULL,
           removed_by = NULL,
           muted_until = NULL,
-          history_from_sequence = EXCLUDED.history_from_sequence,
+          history_from_sequence = GREATEST(EXCLUDED.history_from_sequence, chat_members.cleared_through_sequence),
           last_delivered_sequence = GREATEST(chat_members.last_delivered_sequence, EXCLUDED.last_delivered_sequence),
           last_read_sequence = GREATEST(chat_members.last_read_sequence, EXCLUDED.last_read_sequence)
         WHERE chat_members.left_at IS NOT NULL
@@ -311,10 +312,30 @@ export class GroupsRepository {
     await tx.update(groups).set(changes).where(eq(groups.chatId, chatId));
   }
 
+  // Points the group at a claimed photo, or back to the generated fallback.
+  // The previous photo's uploads become unreferenced and media cleanup
+  // removes them.
+  async setPhoto(
+    tx: Tx,
+    chatId: string,
+    photo: { uploadId: string; thumbnailUploadId: string } | null,
+  ): Promise<void> {
+    await tx
+      .update(groups)
+      .set({
+        photoUploadId: photo?.uploadId ?? null,
+        photoThumbnailUploadId: photo?.thumbnailUploadId ?? null,
+      })
+      .where(eq(groups.chatId, chatId));
+  }
+
   // Soft delete: history is retained, every membership ends, links and
-  // requests are closed.
+  // requests are closed, and the photo is released for cleanup.
   async softDelete(tx: Tx, chatId: string): Promise<void> {
-    await tx.update(groups).set({ deletedAt: new Date() }).where(eq(groups.chatId, chatId));
+    await tx
+      .update(groups)
+      .set({ deletedAt: new Date(), photoUploadId: null, photoThumbnailUploadId: null })
+      .where(eq(groups.chatId, chatId));
     await tx.execute(sql`
       UPDATE chat_members SET left_at = NOW(), role = 'member'
       WHERE chat_id = ${chatId} AND left_at IS NULL
@@ -326,15 +347,17 @@ export class GroupsRepository {
     `);
   }
 
-  async members(executor: Executor, chatId: string): Promise<GroupMemberDto[]> {
+  async members(executor: Executor, chatId: string, viewerId: string): Promise<GroupMemberDto[]> {
     const result = await executor.execute<{
       user_id: string;
       display_name: string | null;
+      photo_id: string | null;
       status: string;
       role: GroupRole;
       joined_at: string;
     }>(sql`
-      SELECT m.user_id, u.display_name, u.status, m.role, ${isoTimestamp(sql`m.joined_at`)} AS joined_at
+      SELECT m.user_id, u.display_name, ${photoIdFor(sql`u`, viewerId)} AS photo_id,
+        u.status, m.role, ${isoTimestamp(sql`m.joined_at`)} AS joined_at
       FROM chat_members m JOIN users u ON u.id = m.user_id
       WHERE m.chat_id = ${chatId} AND m.left_at IS NULL
       ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
@@ -343,6 +366,7 @@ export class GroupsRepository {
     return result.rows.map((row) => ({
       userId: row.user_id,
       displayName: row.status === "active" ? row.display_name : null,
+      photoId: row.photo_id,
       available: row.status === "active",
       role: row.role,
       joinedAt: row.joined_at,
@@ -458,13 +482,19 @@ export class GroupsRepository {
     return result.rows.length > 0;
   }
 
-  async pendingRequests(executor: Executor, chatId: string): Promise<JoinRequestDto[]> {
+  async pendingRequests(
+    executor: Executor,
+    chatId: string,
+    viewerId: string,
+  ): Promise<JoinRequestDto[]> {
     const result = await executor.execute<{
       user_id: string;
       display_name: string | null;
+      photo_id: string | null;
       created_at: string;
     }>(sql`
-      SELECT r.user_id, u.display_name, ${isoTimestamp(sql`r.created_at`)} AS created_at
+      SELECT r.user_id, u.display_name, ${photoIdFor(sql`u`, viewerId)} AS photo_id,
+        ${isoTimestamp(sql`r.created_at`)} AS created_at
       FROM group_join_requests r JOIN users u ON u.id = r.user_id
       WHERE r.chat_id = ${chatId} AND r.status = 'pending' AND u.status = 'active'
       ORDER BY r.created_at, r.user_id
@@ -472,6 +502,7 @@ export class GroupsRepository {
     return result.rows.map((row) => ({
       userId: row.user_id,
       displayName: row.display_name,
+      photoId: row.photo_id,
       createdAt: row.created_at,
     }));
   }

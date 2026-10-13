@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Database } from "../../db/client.js";
-import { messages, type Message } from "../../db/schema/index.js";
+import { chatMembers, messages, type Message } from "../../db/schema/index.js";
 import type { SystemEvent, SystemEventInput } from "../groups/groups.types.js";
 
 export type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -82,6 +82,48 @@ export async function insertSystemMessage(
     WHERE chat_id = ${chatId} AND user_id = ${input.actorId} AND left_at IS NULL
   `);
   return message;
+}
+
+// The canonical direct chat for the pair, created (with both memberships)
+// if needed. direct_chat_pair_unique makes concurrent calls converge on
+// one row.
+export async function findOrCreateDirectChat(
+  tx: Tx,
+  userId: string,
+  otherId: string,
+): Promise<string> {
+  const inserted = await tx.execute<{ id: string }>(sql`
+    INSERT INTO chats (type, created_by, direct_user_a_id, direct_user_b_id)
+    VALUES ('direct', ${userId}, LEAST(${userId}::uuid, ${otherId}::uuid),
+            GREATEST(${userId}::uuid, ${otherId}::uuid))
+    ON CONFLICT (LEAST(direct_user_a_id, direct_user_b_id),
+                 GREATEST(direct_user_a_id, direct_user_b_id))
+      WHERE type = 'direct'
+    DO NOTHING
+    RETURNING id
+  `);
+
+  let chatId = inserted.rows[0]?.id;
+  if (!chatId) {
+    const existing = await tx.execute<{ id: string }>(sql`
+      SELECT id FROM chats
+      WHERE type = 'direct'
+        AND LEAST(direct_user_a_id, direct_user_b_id) = LEAST(${userId}::uuid, ${otherId}::uuid)
+        AND GREATEST(direct_user_a_id, direct_user_b_id) = GREATEST(${userId}::uuid, ${otherId}::uuid)
+    `);
+    chatId = existing.rows[0]?.id;
+  }
+  if (!chatId) throw new Error("direct chat vanished after conflict");
+
+  await tx
+    .insert(chatMembers)
+    .values([
+      { chatId, userId },
+      { chatId, userId: otherId },
+    ])
+    .onConflictDoNothing();
+
+  return chatId;
 }
 
 export async function activeMemberIds(executor: Executor, chatId: string): Promise<string[]> {

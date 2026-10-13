@@ -13,6 +13,7 @@ export type SystemEvent = { names: Record<string, string | null> } & (
   | { kind: "owner.changed"; actorId: string; userId: string }
   | { kind: "info.changed"; actorId: string; name: string | null; descriptionChanged: boolean }
   | { kind: "settings.changed"; actorId: string; changes: Partial<GroupSettings> }
+  | { kind: "photo.changed"; actorId: string; removed: boolean }
 );
 
 export type SystemEventKind = SystemEvent["kind"];
@@ -28,8 +29,9 @@ export type SystemEventInput = SystemEvent extends infer E
 export interface GroupInfo {
   name: string;
   description: string | null;
-  // Group photos need a media pipeline that doesn't exist yet.
-  avatarUrl: null;
+  // The group photo's version, or null for the generated fallback. Members
+  // fetch the image through GET /groups/:chatId/photo.
+  photoId: string | null;
   memberCount: number;
   myRole: GroupRole;
   settings: GroupSettings;
@@ -38,6 +40,7 @@ export interface GroupInfo {
 export interface GroupMemberDto {
   userId: string;
   displayName: string | null;
+  photoId: string | null;
   available: boolean;
   role: GroupRole;
   joinedAt: string;
@@ -53,6 +56,7 @@ export interface InviteLinkDto {
 export interface JoinRequestDto {
   userId: string;
   displayName: string | null;
+  photoId: string | null;
   createdAt: string;
 }
 
@@ -61,7 +65,7 @@ export interface GroupDetails {
   chatId: string;
   name: string;
   description: string | null;
-  avatarUrl: null;
+  photoId: string | null;
   createdAt: string;
   createdBy: string;
   myRole: GroupRole;

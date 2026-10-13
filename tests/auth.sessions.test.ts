@@ -57,6 +57,7 @@ describe("sessions and tokens", () => {
         displayName: null,
         username: null,
         dateOfBirth: null,
+        photoId: null,
       },
       device: { id: session.device.id, platform: "ios", name: "Test iPhone" },
     });

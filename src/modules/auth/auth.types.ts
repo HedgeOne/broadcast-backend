@@ -36,6 +36,9 @@ export interface PublicUser {
   displayName: string | null;
   username: string | null;
   dateOfBirth: string | null; // YYYY-MM-DD
+  // The current profile photo's version, or null. The owner fetches it
+  // through GET /users/:id/photo like everyone else.
+  photoId: string | null;
 }
 
 export interface PublicDevice {
@@ -51,6 +54,7 @@ export function toPublicUser(user: User): PublicUser {
     displayName: user.displayName,
     username: user.username,
     dateOfBirth: user.dateOfBirth,
+    photoId: user.photoUploadId,
   };
 }
 

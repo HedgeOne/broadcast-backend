@@ -9,13 +9,27 @@ import type { ChatMembership, ChatsRepository } from "../chats/chats.repository.
 import { groupErrors } from "../groups/groups.errors.js";
 import { can, canActOn } from "../groups/groups.policy.js";
 import { settingsOf, type GroupsRepository } from "../groups/groups.repository.js";
-import { replyPreview, type Hydration, type MessagesRepository } from "./messages.repository.js";
+import { toAttachmentDto, type AttachmentDto } from "../media/media.types.js";
+import {
+  replyPreview,
+  type Hydration,
+  type MessagesRepository,
+  type SharedKind,
+} from "./messages.repository.js";
 import type { SendMessageBody } from "./messages.schemas.js";
 import { toMessageDto, type MessageDto, type ReactionDto } from "./messages.types.js";
 
 const SEND_LIMIT = { limit: 120, windowSeconds: 60 };
 const REACT_LIMIT = { limit: 120, windowSeconds: 60 };
 const DELETE_LIMIT = { limit: 60, windowSeconds: 60 };
+const STAR_LIMIT = { limit: 120, windowSeconds: 60 };
+const CLEAR_LIMIT = { limit: 30, windowSeconds: 60 * 60 };
+
+function attachmentDtoOf(
+  attachment: Parameters<typeof toAttachmentDto>[0] | undefined,
+): AttachmentDto | null {
+  return attachment ? toAttachmentDto(attachment) : null;
+}
 
 export interface MessagesServiceDeps {
   messages: MessagesRepository;
@@ -23,6 +37,8 @@ export interface MessagesServiceDeps {
   groups: GroupsRepository;
   realtime: RealtimePublisher;
   rateLimiter: RateLimiter;
+  // Runs after a new message committed (its push job is already queued).
+  onMessageCommitted?: () => void;
 }
 
 export class MessagesService {
@@ -60,7 +76,14 @@ export class MessagesService {
     }
   }
 
-  private dto(message: Message, hydration: Hydration, historyFrom: number): MessageDto {
+  // `starred` is the requesting user's stars; leave it out for DTOs that
+  // are shared with other members.
+  private dto(
+    message: Message,
+    hydration: Hydration,
+    historyFrom: number,
+    starred?: Set<string>,
+  ): MessageDto {
     const target = message.replyToMessageId
       ? hydration.replies.get(message.replyToMessageId)
       : undefined;
@@ -70,7 +93,23 @@ export class MessagesService {
         : null,
       mentions: hydration.mentions.get(message.id) ?? [],
       reactions: hydration.reactions.get(message.id) ?? [],
+      attachment: attachmentDtoOf(hydration.attachments.get(message.id)),
+      ...(starred ? { starred: starred.has(message.id) } : {}),
     });
+  }
+
+  // DTOs for the requesting user, with their stars.
+  private async ownDtos(
+    userId: string,
+    list: Message[],
+    historyFrom: number,
+  ): Promise<MessageDto[]> {
+    const ids = list.map((message) => message.id);
+    const [hydration, starred] = await Promise.all([
+      this.deps.messages.hydrate(list),
+      this.deps.messages.starredIds(userId, ids),
+    ]);
+    return list.map((message) => this.dto(message, hydration, historyFrom, starred));
   }
 
   private async hydrateOne(message: Message, historyFrom: number): Promise<MessageDto> {
@@ -158,6 +197,7 @@ export class MessagesService {
         ciphertext: Buffer.from(body.ciphertext, "base64"),
         replyToMessageId: body.replyToMessageId ?? null,
         mentions,
+        attachment: body.attachment ?? null,
       },
       // Re-checked under the chat lock: a removal or settings change that
       // committed first wins.
@@ -191,6 +231,7 @@ export class MessagesService {
     if (result.message.chatId !== chatId) throw chatErrors.clientMessageIdConflict();
 
     if (result.created) {
+      this.deps.onMessageCommitted?.();
       await this.publishMessage(chatId, membership, auth.userId, result.message, "message.new");
     }
     return {
@@ -209,13 +250,108 @@ export class MessagesService {
       ...query,
       historyFrom: membership.historyFrom,
     });
-    const hydration = await this.deps.messages.hydrate(page.messages);
     return {
-      messages: page.messages.map((message) =>
-        this.dto(message, hydration, membership.historyFrom),
-      ),
+      messages: await this.ownDtos(userId, page.messages, membership.historyFrom),
       hasMore: page.hasMore,
     };
+  }
+
+  // Media or documents shared in the conversation, as far back as the
+  // caller's history goes (Clear Chat included), newest first.
+  async shared(
+    userId: string,
+    chatId: string,
+    query: { kind: SharedKind; before?: number | undefined; limit: number },
+  ): Promise<{ messages: MessageDto[]; hasMore: boolean }> {
+    const membership = await this.requireMembership(userId, chatId);
+    const page = await this.deps.messages.shared(chatId, {
+      ...query,
+      historyFrom: membership.historyFrom,
+    });
+    return {
+      messages: await this.ownDtos(userId, page.messages, membership.historyFrom),
+      hasMore: page.hasMore,
+    };
+  }
+
+  // The caller's starred messages in this chat, newest first. Stars kept
+  // through Clear Chat are included; `inHistory` is false for those (they
+  // can be opened but not scrolled to).
+  async starred(
+    userId: string,
+    chatId: string,
+    query: { before?: number | undefined; limit: number },
+  ): Promise<{ messages: (MessageDto & { inHistory: boolean })[]; hasMore: boolean }> {
+    const membership = await this.requireMembership(userId, chatId);
+    const page = await this.deps.messages.starred(userId, chatId, query);
+    const dtos = await this.ownDtos(userId, page.messages, membership.historyFrom);
+    return {
+      messages: dtos.map((dto) => ({ ...dto, inHistory: dto.sequence > membership.historyFrom })),
+      hasMore: page.hasMore,
+    };
+  }
+
+  // Idempotent. Starring needs a live, visible, non-system message;
+  // unstarring works on anything the caller starred in this chat, including
+  // messages kept through Clear Chat. Only the caller's devices are told.
+  async star(
+    userId: string,
+    chatId: string,
+    messageId: string,
+    starred: boolean,
+  ): Promise<{ messageId: string; starred: boolean }> {
+    await this.requireMembership(userId, chatId);
+    await this.limit(`msg:star:${userId}`, STAR_LIMIT, "You're starring messages too quickly.");
+
+    const changed = await this.deps.messages.transaction(async (tx) => {
+      // Serialises with deletion, which removes every star on the message.
+      await lockChat(tx, chatId);
+      const current = await this.requireMembership(userId, chatId, tx);
+      const target = await this.deps.messages.findInChat(tx, chatId, messageId);
+      if (!target) throw chatErrors.messageNotFound();
+      if (!starred) return this.deps.messages.setStar(tx, userId, messageId, false);
+      if (target.sequence <= current.historyFrom) throw chatErrors.messageNotFound();
+      if (target.deletedAt !== null || target.type === "system") {
+        throw chatErrors.starNotAllowed();
+      }
+      return this.deps.messages.setStar(tx, userId, messageId, true);
+    });
+
+    if (changed) {
+      await this.deps.realtime.publish(userId, {
+        type: "message.starred",
+        chatId,
+        messageId,
+        starred,
+      });
+    }
+    return { messageId, starred };
+  }
+
+  // Clear Chat: hides everything up to now from the caller only. Nothing is
+  // deleted and no other member is told; the caller stays in the chat and
+  // the chat stays in their list. Their other devices drop the history on
+  // the chat.cleared event (or on their next chat list refresh).
+  async clear(
+    userId: string,
+    chatId: string,
+    keepStarred: boolean,
+  ): Promise<{ chatId: string; clearedThroughSequence: number }> {
+    await this.requireMembership(userId, chatId);
+    await this.limit(`chat:clear:${userId}`, CLEAR_LIMIT, "You're clearing chats too quickly.");
+
+    const cleared = await this.deps.messages.transaction(async (tx) => {
+      await lockChat(tx, chatId);
+      await this.requireMembership(userId, chatId, tx);
+      return this.deps.messages.clearHistory(tx, chatId, userId, keepStarred);
+    });
+
+    await this.deps.realtime.publish(userId, {
+      type: "chat.cleared",
+      chatId,
+      clearedThroughSequence: cleared,
+    });
+    return { chatId, clearedThroughSequence: cleared };
   }
 
   // Sets (or with null, removes) the caller's single reaction.

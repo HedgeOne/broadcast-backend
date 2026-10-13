@@ -1,5 +1,6 @@
 import type { Message } from "../../db/schema/index.js";
 import type { SystemEvent } from "../groups/groups.types.js";
+import type { AttachmentDto } from "../media/media.types.js";
 
 export type MessageKind = Message["type"];
 
@@ -34,17 +35,26 @@ export interface MessageDto {
   // Validated member ids; the body refers to them as @{userId} tokens.
   mentions: string[];
   reactions: ReactionDto[];
+  // Media messages: the file's metadata. Never a URL; readers request a
+  // short-lived download URL for the attachment id.
+  attachment: AttachmentDto | null;
   system: SystemEvent | null;
   deleted: boolean;
   deletedBy: string | null;
+  // Whether the requesting user starred it. Only in responses to that user
+  // (history, sends, starred lists); absent from events shared with others.
+  starred?: boolean;
 }
 
 export function toMessageDto(
   message: Message,
-  extras: Partial<Pick<MessageDto, "replyTo" | "mentions" | "reactions">> = {},
+  extras: Partial<
+    Pick<MessageDto, "replyTo" | "mentions" | "reactions" | "attachment" | "starred">
+  > = {},
 ): MessageDto {
   const deleted = message.deletedAt !== null;
   return {
+    ...(extras.starred !== undefined ? { starred: !deleted && extras.starred } : {}),
     id: message.id,
     chatId: message.chatId,
     senderId: message.senderId,
@@ -56,6 +66,7 @@ export function toMessageDto(
     replyTo: extras.replyTo ?? null,
     mentions: deleted ? [] : (extras.mentions ?? []),
     reactions: deleted ? [] : (extras.reactions ?? []),
+    attachment: deleted ? null : (extras.attachment ?? null),
     system: (message.systemEvent as SystemEvent | null) ?? null,
     deleted,
     deletedBy: message.deletedBy,

@@ -28,6 +28,8 @@
     "db:seed": "tsx src/db/cli/seed.ts",
     "db:reset": "tsx src/db/cli/reset.ts",
     "db:test:prepare": "tsx src/db/cli/test-prepare.ts",
+    "media:check": "tsx src/modules/media/cli/check.ts",
+    "media:reconcile": "tsx src/modules/media/cli/reconcile.ts",
     "prepare": "simple-git-hooks"
   },
   "simple-git-hooks": {
@@ -41,6 +43,8 @@
     "*.{json,md,yml,yaml}": "prettier --write"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@aws-sdk/s3-request-presigner": "^3.1149.0",
     "@fastify/cors": "^11.3.0",
     "@fastify/helmet": "^13.1.1",
     "@fastify/jwt": "^10.2.2",

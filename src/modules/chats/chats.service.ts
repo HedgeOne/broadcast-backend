@@ -1,17 +1,30 @@
+import { AppError } from "../../lib/errors.js";
+import type { RateLimiter } from "../../lib/rate-limiter.js";
 import type { RealtimePublisher } from "../../realtime/index.js";
 import { chatErrors } from "./chats.errors.js";
 import type { ChatsRepository } from "./chats.repository.js";
+import type { MuteDuration } from "./chats.schemas.js";
 import type { ChatSummary } from "./chats.types.js";
+
+const MUTE_LIMIT = { limit: 60, windowSeconds: 60 };
 
 export interface Receipts {
   deliveredSequence: number;
   readSequence: number;
 }
 
+export type DirectReceiptsListener = (
+  userId: string,
+  chatId: string,
+  receipts: Receipts,
+) => Promise<void>;
+
 export class ChatsService {
   constructor(
     private readonly repository: ChatsRepository,
     private readonly realtime: RealtimePublisher,
+    private readonly rateLimiter: RateLimiter,
+    private readonly onDirectReceipts?: DirectReceiptsListener,
   ) {}
 
   list(userId: string): Promise<ChatSummary[]> {
@@ -47,8 +60,26 @@ export class ChatsService {
     return this.get(userId, chatId);
   }
 
-  async setMuted(userId: string, chatId: string, muted: boolean): Promise<ChatSummary> {
-    if (!(await this.repository.setMuted(userId, chatId, muted))) throw chatErrors.chatNotFound();
+  // Personal to the caller: other members' notifications are unaffected and
+  // nobody else can see it. Repeating the same request is harmless (a timed
+  // mute restarts from now). null unmutes.
+  async setMute(
+    userId: string,
+    chatId: string,
+    duration: MuteDuration | null,
+  ): Promise<ChatSummary> {
+    const limit = await this.rateLimiter.consume(
+      `chat:mute:${userId}`,
+      MUTE_LIMIT.limit,
+      MUTE_LIMIT.windowSeconds,
+    );
+    if (!limit.allowed) {
+      throw new AppError(429, "RATE_LIMITED", "You're changing mute settings too quickly.", {
+        retryAfterSeconds: limit.retryAfterSeconds,
+      });
+    }
+    if (!(await this.repository.findMembership(userId, chatId))) throw chatErrors.chatNotFound();
+    if (!(await this.repository.setMute(userId, chatId, duration))) throw chatErrors.chatNotFound();
     return this.get(userId, chatId);
   }
 
@@ -110,6 +141,10 @@ export class ChatsService {
         this.realtime.publish(userId, { ...event, readSequence: result.readSequence }),
       ]);
     }
+
+    // Pointers only grow and the listener covers every message up to them,
+    // so if this fails the next receipt in the chat catches up.
+    await this.onDirectReceipts?.(userId, chatId, receipts).catch(() => undefined);
 
     return receipts;
   }

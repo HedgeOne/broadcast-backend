@@ -27,7 +27,9 @@ export const chatsRoutes: FastifyPluginCallback<ChatsRoutesOptions> = (app, { se
   app.put("/:chatId/mute", async (request) => {
     const { chatId } = chatParams.parse(request.params);
     const body = muteBody.parse(request.body);
-    return { chat: await service.setMuted(request.auth.userId, chatId, body.muted) };
+    return {
+      chat: await service.setMute(request.auth.userId, chatId, body.muted ? body.duration : null),
+    };
   });
 
   app.post("/:chatId/receipts", async (request) => {

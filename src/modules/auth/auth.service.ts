@@ -398,10 +398,13 @@ export class AuthService {
 
   async logout(auth: AuthContext): Promise<void> {
     await this.repository.revokeSession(auth.sessionId);
+    await this.repository.revokePushTokens({ deviceId: auth.deviceId });
   }
 
   async logoutAll(auth: AuthContext): Promise<number> {
-    return this.repository.revokeSessionsForUser(auth.userId);
+    const revoked = await this.repository.revokeSessionsForUser(auth.userId);
+    await this.repository.revokePushTokens({ userId: auth.userId });
+    return revoked;
   }
 
   async me(auth: AuthContext): Promise<{ user: PublicUser; device: PublicDevice }> {

@@ -4,7 +4,7 @@ import { AppError } from "../../lib/errors.js";
 import type { RateLimiter } from "../../lib/rate-limiter.js";
 import { chatErrors } from "../chats/chats.errors.js";
 import type { PrivacyRepository } from "./privacy.repository.js";
-import { blockParams, reportBody } from "./privacy.schemas.js";
+import { blockParams, reportBody, updateSettingsBody } from "./privacy.schemas.js";
 
 const REPORT_LIMIT = { limit: 20, windowSeconds: 86_400 };
 
@@ -22,6 +22,17 @@ export const privacyRoutes: FastifyPluginCallback<PrivacyRoutesOptions> = (
   done,
 ) => {
   app.addHook("preHandler", app.authenticate);
+
+  app.get("/settings", async (request) => {
+    return { settings: await repository.settings(request.auth.userId) };
+  });
+
+  // Applies to the next request anyone makes: photo access is checked
+  // every time a download URL is issued.
+  app.patch("/settings", async (request) => {
+    const body = updateSettingsBody.parse(request.body);
+    return { settings: await repository.updateSettings(request.auth.userId, body) };
+  });
 
   // Blocking is silent: the blocked user is not notified.
   app.put("/blocks/:userId", async (request, reply) => {

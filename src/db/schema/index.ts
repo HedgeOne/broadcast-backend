@@ -8,4 +8,5 @@ export * from "./messages.js";
 export * from "./media.js";
 export * from "./broadcasts.js";
 export * from "./privacy.js";
+export * from "./notifications.js";
 export * from "./migrations.js";

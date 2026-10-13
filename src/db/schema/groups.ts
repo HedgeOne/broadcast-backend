@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { chats } from "./chats.js";
+import { mediaUploads } from "./media.js";
 import { bytea, timestamptz } from "./types.js";
 import { users } from "./users.js";
 
@@ -26,8 +27,10 @@ export const groups = pgTable(
     name: text("name").notNull(),
     description: text("description"),
 
-    // No FK yet: the media table does not exist.
-    avatarMediaId: uuid("avatar_media_id"),
+    // Group photo: a verified 'group_photo' upload and its thumbnail, always
+    // set together. Only current members may download them.
+    photoUploadId: uuid("photo_upload_id"),
+    photoThumbnailUploadId: uuid("photo_thumbnail_upload_id"),
 
     approvalRequired: boolean("approval_required").notNull().default(false),
 
@@ -47,6 +50,26 @@ export const groups = pgTable(
       columns: [t.chatId],
       foreignColumns: [chats.id],
     }).onDelete("cascade"),
+    foreignKey({
+      name: "groups_photo_upload_id_fkey",
+      columns: [t.photoUploadId],
+      foreignColumns: [mediaUploads.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "groups_photo_thumbnail_upload_id_fkey",
+      columns: [t.photoThumbnailUploadId],
+      foreignColumns: [mediaUploads.id],
+    }).onDelete("restrict"),
+    check(
+      "groups_photo_pair_check",
+      sql`(${t.photoUploadId} IS NULL) = (${t.photoThumbnailUploadId} IS NULL)`,
+    ),
+    index("groups_photo_upload_idx")
+      .on(t.photoUploadId)
+      .where(sql`${t.photoUploadId} IS NOT NULL`),
+    index("groups_photo_thumbnail_upload_idx")
+      .on(t.photoThumbnailUploadId)
+      .where(sql`${t.photoThumbnailUploadId} IS NOT NULL`),
 
     check("groups_name_not_empty", sql`length(trim(${t.name})) > 0`),
     check("groups_name_length", sql`char_length(${t.name}) <= 100`),

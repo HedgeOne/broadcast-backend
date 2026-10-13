@@ -1,30 +1,66 @@
 import { z } from "zod";
 
-// 48 KiB of body bytes is far beyond any text message; media bodies will
-// reference uploaded attachments rather than inline data.
+import { attachmentRef } from "../media/media.schemas.js";
+
+// 48 KiB of body bytes is far beyond any text message or caption; file
+// bytes never travel in the body, only a reference to a verified upload.
 export const MAX_CIPHERTEXT_BYTES = 48 * 1024;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const MAX_MENTIONS = 50;
 
 export const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
 
-export const sendMessageBody = z.object({
-  clientMessageId: z.uuid(),
-  // Only text is supported in this batch; other message types need media.
-  type: z.literal("text"),
-  ciphertext: z
-    .string()
-    .min(1)
-    .max(Math.ceil(MAX_CIPHERTEXT_BYTES / 3) * 4)
-    .regex(BASE64, "ciphertext must be base64"),
-  replyToMessageId: z.uuid().optional(),
-  // Group members referenced as @{userId} in the body.
-  mentions: z
-    .array(z.uuid())
-    .max(MAX_MENTIONS)
-    .transform((ids) => [...new Set(ids)])
-    .optional(),
-});
+export const MEDIA_MESSAGE_TYPES = ["image", "video", "audio", "document"] as const;
+
+export const messageType = z.enum(["text", ...MEDIA_MESSAGE_TYPES]);
+
+export const messageCiphertext = z
+  .string()
+  .max(Math.ceil(MAX_CIPHERTEXT_BYTES / 3) * 4)
+  .refine((value) => value === "" || BASE64.test(value), "ciphertext must be base64");
+
+// A text message has a non-empty body. A media message references one
+// verified upload of the sender's; its body is the caption and may be
+// empty.
+export function checkMessageBody(
+  body: { type: string; ciphertext: string; attachment?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  if (body.type === "text") {
+    if (body.ciphertext === "") {
+      ctx.addIssue({ code: "custom", path: ["ciphertext"], message: "Text messages need a body." });
+    }
+    if (body.attachment) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attachment"],
+        message: "Text messages can't carry files.",
+      });
+    }
+  } else if (!body.attachment) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["attachment"],
+      message: "Media messages need an attachment.",
+    });
+  }
+}
+
+export const sendMessageBody = z
+  .object({
+    clientMessageId: z.uuid(),
+    type: messageType,
+    ciphertext: messageCiphertext,
+    attachment: attachmentRef.optional(),
+    replyToMessageId: z.uuid().optional(),
+    // Group members referenced as @{userId} in the body.
+    mentions: z
+      .array(z.uuid())
+      .max(MAX_MENTIONS)
+      .transform((ids) => [...new Set(ids)])
+      .optional(),
+  })
+  .superRefine(checkMessageBody);
 
 export const listMessagesQuery = z
   .object({
@@ -37,6 +73,20 @@ export const listMessagesQuery = z
   });
 
 export const messageParams = z.object({ chatId: z.uuid(), messageId: z.uuid() });
+
+// Cursor paging, newest first: `before` is the last sequence of the
+// previous page.
+const pageQuery = {
+  before: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+};
+
+export const sharedQuery = z.object({ kind: z.enum(["media", "docs"]), ...pageQuery }).strict();
+
+export const starredQuery = z.object(pageQuery).strict();
+
+// Explicit so the client always states what happens to starred messages.
+export const clearChatBody = z.object({ keepStarred: z.boolean() }).strict();
 
 export const reactionBody = z.object({ emoji: z.enum(REACTION_EMOJIS) });
 

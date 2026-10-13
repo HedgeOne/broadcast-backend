@@ -82,7 +82,13 @@ describe("POST /contacts/match", () => {
       matches: [
         {
           phoneNumber: phone(2),
-          user: { id: friend.user.id, displayName: "Friend", available: true, blockedByMe: false },
+          user: {
+            id: friend.user.id,
+            displayName: "Friend",
+            available: true,
+            blockedByMe: false,
+            photoId: null,
+          },
         },
       ],
     });
@@ -120,6 +126,7 @@ describe("POST /contacts/match", () => {
       "blockedByMe",
       "displayName",
       "id",
+      "photoId",
     ]);
     expect(response.body).not.toMatch(/status|verified|username|dateOfBirth|avatar|lastSeen/i);
   });

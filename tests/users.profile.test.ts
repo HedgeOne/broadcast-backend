@@ -65,6 +65,7 @@ describe("PATCH /users/me", () => {
         displayName: "Ana Silva",
         username: null,
         dateOfBirth,
+        photoId: null,
       },
     });
 

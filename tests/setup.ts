@@ -33,4 +33,14 @@ Object.assign(process.env, {
   AUTH_OTP_SEND_PHONE_LIMIT: "5",
   AUTH_OTP_VERIFY_IP_LIMIT: "20",
   AUTH_OTP_VERIFY_PHONE_LIMIT: "8",
+  // Tests drive the broadcast sweep explicitly.
+  BROADCAST_SWEEP_INTERVAL_MS: "0",
+  // Tests use an in-memory object store and drive the media sweep
+  // explicitly; nothing reaches S3.
+  MEDIA_SWEEP_INTERVAL_MS: "0",
+  AWS_S3_BUCKET: "test-bucket.invalid",
+  // Tests inject a fake push provider and drive the notification worker
+  // explicitly; nothing reaches Expo.
+  EXPO_PUSH_API_URL: "https://expo-push.invalid/--/api/v2/push",
+  PUSH_SWEEP_INTERVAL_MS: "0",
 });

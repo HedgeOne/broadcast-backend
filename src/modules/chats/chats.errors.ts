@@ -35,6 +35,8 @@ export const chatErrors = {
   reactionNotAllowed: () =>
     new AppError(400, "REACTION_NOT_ALLOWED", "You can't react to this message."),
 
+  starNotAllowed: () => new AppError(400, "STAR_NOT_ALLOWED", "You can't star this message."),
+
   deleteForbidden: () =>
     new AppError(403, "MESSAGE_DELETE_FORBIDDEN", "You can't delete this message."),
 

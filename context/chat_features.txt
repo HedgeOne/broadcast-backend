@@ -1,0 +1,511 @@
+# Implement Conversation Details: Media, Links & Docs, Starred, Clear Chat, and Groups in Common
+
+You are working on **Broadcast**, a WhatsApp-inspired messaging application.
+
+## 1. Repositories and architecture
+
+Frontend repository:
+`~/Desktop/broadcast`
+
+Backend repository:
+`~/Desktop/broadcast/broadcast-backend`
+
+Frontend:
+- Expo React Native, TypeScript, Expo Router.
+- Expo SDK 57.
+- React Query, Zustand, Expo SQLite and SecureStore.
+- Existing shared theme/design system and navigation.
+- Must remain compatible with the project's current Expo development workflow.
+
+Backend:
+- Node.js 24, TypeScript, Fastify.
+- PostgreSQL and Redis.
+- Existing authenticated REST APIs and WebSocket messaging.
+- Existing direct chats, group chats, broadcast lists, attachments and message delivery/read receipts.
+- Private AWS S3 media storage is configured for the application.
+
+Relevant existing database entities may include:
+- `chats`
+- `chat_members`
+- `groups`
+- `group_members`
+- `messages`
+- `message_attachments`
+- `message_reactions`
+- `starred_messages`
+- `broadcast_lists`
+- `broadcast_list_members`
+- `broadcast_messages`
+- `broadcast_message_recipients`
+
+These names come from the existing architecture and may not reflect every current column or relationship. Inspect the actual migrations, schema, routes, API clients, types, components and screens before implementation.
+
+## 2. Objective
+
+Implement these four features end-to-end:
+
+1. **Media, Links and Docs** on direct-chat, group-details and broadcast-list-details pages.
+2. **Starred** on direct-chat, group-details and broadcast-list-details pages.
+3. **Clear Chat**, affecting only the authenticated user's view/history.
+4. **Groups in common**, exclusively on an individual contact's details page.
+
+Implement the real database queries, backend APIs, authorization, UI, navigation, loading/error/empty states and automated tests.
+
+Do not build static mock screens. Do not duplicate existing functionality. Reuse the current messaging, attachment, storage, navigation and theme infrastructure.
+
+## 3. Establish a consistent details-page structure
+
+Inspect the existing details pages and preserve their current design and working functionality.
+
+Each details page should provide appropriate navigation to the following sections.
+
+### Individual contact details
+
+- Contact profile information and existing actions.
+- Media, Links and Docs.
+- Starred.
+- Groups in common.
+- Clear Chat, clearly identified as a local-to-this-user action.
+
+### Group details
+
+- Existing group information, member list and administration controls.
+- Media, Links and Docs.
+- Starred.
+- Clear Chat, clearly identified as a local-to-this-user action.
+
+Do not display Groups in common on group details.
+
+### Broadcast-list details
+
+- Existing broadcast-list information and recipient-management controls.
+- Media, Links and Docs for content belonging to this broadcast list.
+- Starred for the authenticated user's starred items in this list.
+- Clear Chat/history for this list, affecting only the list owner's own view/history.
+
+Do not display Groups in common on broadcast-list details.
+
+Do not expose the broadcast list's name, photo, member roster or list-specific history to broadcast recipients through these screens or APIs. A recipient's copy of a broadcast message may appear in their direct conversation, but it must not expose the sender's internal broadcast-list context.
+
+## 4. Media, Links and Docs
+
+### User experience
+
+Build a reusable shared-content screen that accepts a properly typed conversation context:
+- Direct chat.
+- Group chat.
+- Broadcast list.
+
+Use a clear three-tab interface:
+- Media
+- Links
+- Docs
+
+Follow the existing design system. Support safe areas, small screens, loading states, errors, empty states, pagination and refresh.
+
+#### Media tab
+
+Display supported image, video, audio and other media attachments according to the existing product capabilities.
+
+For images and videos:
+- Use a responsive grid with appropriate thumbnails.
+- Show a loading placeholder and a useful fallback when a thumbnail is unavailable.
+- Open the existing image viewer or video player.
+- Navigate to the original message when that is supported by the current chat architecture.
+
+For audio and voice messages:
+- Reuse the existing audio playback implementation if present.
+- Show duration and date where available.
+- Do not introduce a second, incompatible media-player architecture.
+
+Use the real attachment metadata. Do not fabricate thumbnails, media sizes, timestamps or preview content.
+
+#### Links tab
+
+Extract links from persisted messages using a reliable URL-detection utility, or reuse an existing parser.
+
+Requirements:
+- Support multiple URLs in one message.
+- Avoid duplicate entries for the same message and URL.
+- Preserve the original message ID, conversation context, sender and timestamp.
+- Display a safe URL/hostname and optional preview metadata.
+- Generate or fetch previews only if a suitable, secure existing mechanism is available.
+- Do not make arbitrary server-side requests to user-supplied URLs without SSRF protections.
+- Do not fetch previews in a way that leaks private message contents or credentials.
+- Handle malformed URLs and unsupported schemes safely.
+- Opening a link must use safe URL validation and the existing external-link handling.
+
+If a message has a URL but no preview metadata, show a useful link row rather than hiding it.
+
+#### Docs tab
+
+Display document attachments with:
+- Filename.
+- File extension or MIME type.
+- File size, when known.
+- Sender and date.
+- Optional document icon or thumbnail where supported.
+
+Tapping a document must use the existing secure attachment-download flow. Generate short-lived authorized URLs through the backend if required by the existing S3 architecture. Never expose private S3 credentials or create public object URLs.
+
+Handle missing files, expired download URLs, failed downloads, unsupported file types and retry.
+
+### Data and performance
+
+Use the actual `message_attachments` relationship and persisted messages. Inspect how URLs, attachment metadata, MIME types, storage keys and broadcast delivery records are currently represented.
+
+Requirements:
+- Filter content by the correct conversation/list context.
+- Respect the logged-in user's access to the conversation.
+- Support cursor-based pagination or the project's established pagination approach.
+- Sort newest-first by a deterministic order.
+- Use appropriate database indexes for frequent queries.
+- Avoid N+1 queries.
+- Do not load every message or attachment into memory to construct the page.
+- Deduplicate items when a single message contains multiple attachments or URLs.
+- Handle media messages without attachments and attachments whose parent message is no longer visible.
+- Preserve current download authorization and privacy rules.
+
+If the existing schema cannot efficiently support these queries, introduce a migration or appropriate query/index improvement. Do not create a redundant media table without demonstrating why it is necessary.
+
+### Navigation
+
+When an item is tapped, open the original message or media viewer in the correct conversation where possible.
+
+If the message is no longer available or the user no longer has access, display a safe fallback and do not bypass authorization.
+
+## 5. Starred messages
+
+### Star and unstar actions
+
+Inspect the existing `starred_messages` table and message action menu.
+
+If starring already exists, complete and reuse it rather than building a separate feature.
+
+If it is incomplete, implement:
+- Star message.
+- Unstar message.
+- Idempotent API behavior.
+- Clear visual indication for a starred message.
+- A Star/Unstar action in the existing message long-press/context menu.
+
+A star belongs to the authenticated user. Starring a message must not change another participant's starred state.
+
+### Starred section in details pages
+
+The Starred section must be scoped to the selected context.
+
+For direct chats:
+- Show messages from that direct conversation starred by the current user.
+
+For groups:
+- Show messages from that group starred by the current user.
+
+For broadcast lists:
+- Show the current user's starred messages associated with that broadcast list.
+- Do not reveal list metadata or recipient details to other users.
+- Inspect whether broadcast messages are stored as list-level records, recipient-specific direct messages or both. Avoid duplicate entries when a logical broadcast appears through multiple representations.
+
+Each starred item should display:
+- Sender attribution where appropriate.
+- Text or a safe media/document preview.
+- Original timestamp.
+- Relevant attachment/link information.
+- A way to open the original message.
+- An Unstar action.
+
+Tapping an item should navigate to the original conversation and scroll to the message if it still exists and is accessible.
+
+### Data model and consistency
+
+Use the existing starred-message schema if it properly supports a user-specific relation.
+
+If changes are needed:
+- Add a reversible migration.
+- Enforce uniqueness for the appropriate user/message pair.
+- Add indexes for listing a user's starred messages by conversation.
+- Apply authorization in the backend.
+- Ensure starring and unstarring are synchronized across the user's devices.
+- Keep frontend caches consistent after mutations.
+
+Do not treat a message as starred merely because another participant starred it.
+
+### Interaction with Clear Chat
+
+Define and test how starred messages interact with clearing a chat.
+
+The user should be able to choose whether to retain or clear starred messages when clearing a conversation. If starred messages are retained, preserve a valid way to access them and their content. Do not leave broken links or expose a cleared message accidentally through an unrelated query.
+
+## 6. Clear Chat — only for the authenticated user
+
+This feature is critical: clearing a chat must never globally delete the shared conversation or remove history from other participants.
+
+### UI and confirmation
+
+Add a clearly visible Clear Chat action to each applicable details page.
+
+Before execution, display a confirmation screen/modal that explains:
+- Only this user's chat history will be cleared.
+- Other participants' messages and histories will remain unchanged.
+- The user will remain in the conversation/group.
+- The chat/list entry will remain available.
+- This action may not be recoverable unless the application has an explicit recovery mechanism.
+
+Provide a choice to retain or clear starred messages.
+
+If the current application has a local media cache, distinguish clearing chat history from deleting the user's downloaded media. Do not delete unrelated files or other conversations' cached attachments.
+
+Prevent accidental taps, duplicate submissions and concurrent clear operations. Show a loading state, success feedback and a recoverable error state.
+
+### Required semantics
+
+For a direct chat:
+- Hide the cleared history from the current user.
+- Do not delete messages from the other participant's history.
+- Keep the direct conversation itself.
+- Keep subsequent new messages visible.
+- Keep delivery/read receipts and normal message processing intact.
+
+For a group:
+- Hide the cleared history from the current user.
+- Do not affect the history of any other member.
+- Do not remove the user from the group.
+- Do not modify membership, group settings or group messages globally.
+
+For a broadcast list:
+- Clear only the current owner's local/list-specific history view as appropriate.
+- Do not delete shared messages or recipient-specific direct messages.
+- Do not modify recipients, list membership or the list itself.
+
+### Backend persistence and multi-device behavior
+
+Do not implement Clear Chat by merely deleting local SQLite rows. A client-only deletion would allow old messages to reappear on the next synchronization.
+
+Inspect the current message synchronization and pagination design. Implement a server-persisted per-user clear state that synchronizes across that user's devices.
+
+Possible designs include:
+- A per-user/per-conversation clear-through marker with a deterministic ordering key.
+- A per-user/per-conversation clear state combined with an explicit per-user starred-message preservation mechanism.
+- A per-user/per-message visibility/tombstone model if the current architecture requires it.
+
+Choose the simplest correct design for the actual schema.
+
+If using a clear-through marker:
+- Use a deterministic message ordering key, not timestamps alone if timestamp collisions or late-arriving messages can cause ambiguity.
+- Ensure messages created after the clear operation remain visible.
+- Ensure messages already persisted before the clear do not reappear during pagination, reconnect, offline sync or another-device login.
+- Define the behavior of delayed/offline message synchronization.
+- Apply the clear filter to all relevant history endpoints, search results, local caches and shared-content views.
+
+If using per-message tombstones:
+- Make the operation transactional and idempotent.
+- Do not change global message-deletion state.
+- Avoid creating unbounded work in a synchronous request for large conversations; use a durable background job if required.
+- Ensure all user-visible endpoints respect the tombstones.
+
+The backend must derive the user identity from the authenticated session. Never accept a client-supplied user ID as authority to clear someone else's history.
+
+### Starred-message handling
+
+Before implementation, inspect the existing starred-message semantics and decide how retained stars work with the clear marker.
+
+If the user chooses to preserve stars:
+- Preserve the selected user's starred entries.
+- Ensure the Starred section remains usable.
+- Avoid exposing cleared messages through ordinary history, search or shared-content tabs.
+- If opening a retained star requires special behavior, implement it explicitly and consistently.
+
+If the user chooses to clear stars too:
+- Remove only the current user's starred entries for the selected context.
+- Never unstar the same message for another participant.
+
+### Cache and synchronization
+
+After a successful clear:
+- Invalidate or update relevant React Query caches.
+- Clear or update the relevant Zustand state.
+- Delete or mark the appropriate user's SQLite cached records.
+- Ensure pending sync operations do not reinsert cleared messages.
+- Broadcast a user-scoped clear-state update to that user's other active sessions/devices where the existing architecture supports it.
+- Do not send a global message-deletion event to other participants.
+
+The UI should reflect the cleared state immediately after successful server confirmation, while handling failures without pretending the operation succeeded.
+
+## 7. Groups in common — direct chats only
+
+Implement a Groups in common section on the individual contact's details page only.
+
+WhatsApp's purpose for this feature is to help a user identify groups shared with a contact.
+
+### Backend query and authorization
+
+Create an authenticated endpoint or extend the existing contact-details endpoint to return the groups in which both:
+1. The authenticated user is currently a member.
+2. The selected contact is currently a member.
+
+Requirements:
+- Verify the selected contact and relevant direct-chat access according to existing policies.
+- Return only groups that the authenticated user is currently authorized to view.
+- Do not return groups the authenticated user has left or been removed from.
+- Do not return groups the other contact has left or been removed from.
+- Do not expose hidden/internal group metadata.
+- Return only fields required by the UI, such as group ID, name, photo URL or existing avatar representation, and permitted preview metadata.
+- Use indexed membership joins and avoid one query per group.
+- Handle duplicate memberships and stale membership records safely.
+- Use the project's existing group visibility rules.
+
+The query should derive the intersection of the two users' current group memberships, not infer common membership from chat history or phone contacts.
+
+### Frontend
+
+On individual contact details:
+- Add a Groups in common section.
+- Show a count if useful.
+- Display group avatar, group name and any permitted subtitle.
+- Provide an empty state such as "No groups in common".
+- Support loading, error and refresh states.
+- Navigate to a group only after normal authorization and membership checks.
+
+Do not display the contact's other groups unless the logged-in user is also a member.
+
+Do not show this section on group details, broadcast-list details or unrelated profile pages.
+
+## 8. API and authorization standards
+
+Inspect existing route naming and conventions before defining endpoints. Use the current authenticated API client and validation approach.
+
+All endpoints must:
+- Require authentication.
+- Derive the current user from the session.
+- Verify the requested chat, group or broadcast-list context.
+- Check current membership/ownership and authorization.
+- Validate pagination cursors and identifiers.
+- Return consistent error formats.
+- Enforce sensible rate limits on mutations.
+- Avoid exposing private S3 keys, other users' preferences or broadcast recipient lists.
+
+Suggested API capabilities, adapted to the current conventions:
+- Paginated media for a conversation/list.
+- Paginated extracted links.
+- Paginated documents.
+- Paginated starred messages for a conversation/list.
+- Star/unstar a message.
+- Read clear state.
+- Clear a conversation's history for the current user.
+- Fetch groups in common for a contact.
+
+Avoid one endpoint per screen if a well-designed, typed shared-content API can handle the contexts safely. Do not force a generic endpoint if it weakens authorization.
+
+## 9. Shared components and UX
+
+Reuse existing components and introduce shared components only where they simplify the implementation, for example:
+- `SharedContentScreen`
+- `MediaGrid`
+- `SharedLinkRow`
+- `SharedDocumentRow`
+- `StarredMessagesScreen`
+- `ClearChatConfirmation`
+- `GroupsInCommonSection`
+
+These are illustrative names, not required paths.
+
+Follow the existing theme system, typography, spacing, colors, icons and safe-area handling.
+
+Requirements:
+- White main backgrounds and existing restrained green accents.
+- Accessible touch targets and readable text.
+- Correct iOS and Android back behavior.
+- No hardcoded device dimensions.
+- No fake media, placeholder groups or demo messages.
+- No unnecessary new design system or state-management layer.
+- Avoid loading all historical content into one screen.
+
+## 10. Migrations, tests and edge cases
+
+Add reversible database migrations and relevant indexes when required.
+
+### Shared content tests
+
+Test:
+- Media/document listing for direct chats, groups and broadcast lists.
+- Link extraction, multiple URLs in one message and malformed URLs.
+- Pagination and deterministic ordering.
+- Duplicate attachment/link handling.
+- Unauthorized access to a conversation.
+- Private S3 download authorization.
+- Deleted/missing attachments and unavailable preview metadata.
+
+### Starred tests
+
+Test:
+- Star/unstar authorization and idempotency.
+- User-specific starred state.
+- Direct chat/group/broadcast-list scoping.
+- Pagination and navigation to the original message.
+- Star retention and clearing during Clear Chat.
+- Behavior when a message becomes unavailable.
+
+### Clear Chat tests
+
+Test:
+- Clearing a direct chat hides only the authenticated user's history.
+- Clearing a group hides only the authenticated user's history.
+- Clearing a broadcast list does not alter recipient conversations.
+- Other participants still see their history.
+- The user remains in the group and the conversation/list remains present.
+- New messages after the clear remain visible.
+- Old messages do not reappear during pagination, reconnect, offline sync or another-device login.
+- Clear-state persistence across multiple devices.
+- Both starred-message retention choices.
+- Authorization failures and invalid conversation IDs.
+- Idempotency, transaction rollback and concurrent clear requests.
+- SQLite and query-cache consistency.
+
+### Groups-in-common tests
+
+Test:
+- Correct intersection of current group memberships.
+- Exclusion of groups where either participant is no longer a member.
+- No disclosure of groups the authenticated user cannot access.
+- Empty state, errors and pagination if needed.
+- Correct placement on individual contact details only.
+
+Run the existing test suite and add tests using the repository's current testing framework. Do not require live AWS credentials or external services for normal unit tests; mock external boundaries where appropriate.
+
+## 11. Engineering constraints
+
+- Inspect before modifying.
+- Preserve existing direct messaging, group membership, broadcast delivery, reactions, read receipts and delivery receipts.
+- Do not introduce message pinning; it is out of scope.
+- Do not delete global message records for Clear Chat.
+- Do not make a local-only clear operation that allows history to reappear.
+- Do not claim E2EE.
+- Do not expose broadcast-list internals to recipients.
+- Do not introduce a second attachment-storage pipeline.
+- Do not invent API routes, table columns or existing functionality without checking.
+- Do not leave core functionality as TODOs.
+
+## 12. Final verification report
+
+After implementation, run the appropriate checks in both repositories:
+- Type checking.
+- Linting.
+- Existing tests.
+- New backend tests.
+- New frontend tests.
+- Migration validation or database integration tests where available.
+
+Fix regressions introduced by the changes.
+
+Provide a report containing:
+1. Actual files created/modified.
+2. Database migrations and indexes.
+3. API endpoints and authorization rules.
+4. How shared content is queried and paginated.
+5. How starred messages are stored and scoped.
+6. How Clear Chat is persisted and synchronized across devices.
+7. How Groups in common is calculated and protected.
+8. Commands executed and actual results.
+9. Any incomplete functionality and external setup required.
+
+Begin by inspecting both repositories and summarizing the current implementations of attachments, starring, conversation details and message synchronization. Then implement the features end-to-end.

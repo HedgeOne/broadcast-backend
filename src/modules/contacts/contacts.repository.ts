@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import type { Database } from "../../db/client.js";
 import { AppError } from "../../lib/errors.js";
 import type { PeerProfile } from "../chats/chats.types.js";
+import { photoIdFor } from "../photos/photos.access.js";
 
 export interface ContactMatch {
   phoneNumber: string;
@@ -52,9 +53,10 @@ export class ContactsRepository {
       const result = await tx.execute<{
         id: string;
         display_name: string | null;
+        photo_id: string | null;
         phone_number: string;
       }>(sql`
-        SELECT u.id, u.display_name, u.phone_number
+        SELECT u.id, u.display_name, ${photoIdFor(sql`u`, viewerId)} AS photo_id, u.phone_number
         FROM users u
         WHERE u.phone_number = ANY(${sql.param(phoneNumbers)}::text[])
           AND u.status = 'active'
@@ -69,7 +71,13 @@ export class ContactsRepository {
       `);
       return result.rows.map((row) => ({
         phoneNumber: row.phone_number,
-        user: { id: row.id, displayName: row.display_name, available: true, blockedByMe: false },
+        user: {
+          id: row.id,
+          displayName: row.display_name,
+          available: true,
+          blockedByMe: false,
+          photoId: row.photo_id,
+        },
       }));
     });
   }

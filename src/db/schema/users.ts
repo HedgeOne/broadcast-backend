@@ -1,6 +1,18 @@
 import { sql } from "drizzle-orm";
-import { check, date, index, pgEnum, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  check,
+  date,
+  foreignKey,
+  index,
+  pgEnum,
+  pgTable,
+  type PgTableExtraConfigValue,
+  text,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
+import { mediaUploads } from "./media.js";
 import { timestamptz } from "./types.js";
 
 export const userStatus = pgEnum("user_status", ["active", "disabled", "deleted"]);
@@ -25,8 +37,11 @@ export const users = pgTable(
     // The minimum age is an application rule, not a constraint.
     dateOfBirth: date("date_of_birth", { mode: "string" }),
 
-    // No FK yet: the media table does not exist.
-    avatarMediaId: uuid("avatar_media_id"),
+    // Profile photo: a verified 'profile_photo' upload and its avatar-sized
+    // thumbnail, always set together. Who may download them is decided by
+    // privacy_settings.profile_photo_visibility and blocks.
+    photoUploadId: uuid("photo_upload_id"),
+    photoThumbnailUploadId: uuid("photo_thumbnail_upload_id"),
 
     status: userStatus("status").notNull().default("active"),
 
@@ -36,11 +51,28 @@ export const users = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
     deletedAt: timestamptz("deleted_at"),
   },
-  (t) => [
+  // Annotated: users and media_uploads reference each other, which TS
+  // can't infer through.
+  (t): PgTableExtraConfigValue[] => [
     check("users_phone_number_e164_check", sql`${t.phoneNumber} ~ '^\\+[1-9][0-9]{6,14}$'`),
     check(
       "users_date_of_birth_range_check",
       sql`${t.dateOfBirth} IS NULL OR ${t.dateOfBirth} >= DATE '1900-01-01'`,
+    ),
+
+    foreignKey({
+      name: "users_photo_upload_id_fkey",
+      columns: [t.photoUploadId],
+      foreignColumns: [mediaUploads.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "users_photo_thumbnail_upload_id_fkey",
+      columns: [t.photoThumbnailUploadId],
+      foreignColumns: [mediaUploads.id],
+    }).onDelete("restrict"),
+    check(
+      "users_photo_pair_check",
+      sql`(${t.photoUploadId} IS NULL) = (${t.photoThumbnailUploadId} IS NULL)`,
     ),
 
     uniqueIndex("users_phone_number_unique").on(t.phoneNumber),
@@ -48,6 +80,12 @@ export const users = pgTable(
       .on(sql`lower(${t.username})`)
       .where(sql`${t.username} IS NOT NULL`),
     index("users_status_idx").on(t.status),
+    index("users_photo_upload_idx")
+      .on(t.photoUploadId)
+      .where(sql`${t.photoUploadId} IS NOT NULL`),
+    index("users_photo_thumbnail_upload_idx")
+      .on(t.photoThumbnailUploadId)
+      .where(sql`${t.photoThumbnailUploadId} IS NOT NULL`),
   ],
 );
 

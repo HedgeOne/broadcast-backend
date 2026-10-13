@@ -63,6 +63,31 @@ export const config = {
     maxMembers: env.GROUP_MAX_MEMBERS,
   },
 
+  broadcasts: {
+    maxRecipients: env.BROADCAST_MAX_RECIPIENTS,
+    sweepIntervalMs: env.BROADCAST_SWEEP_INTERVAL_MS,
+  },
+
+  media: {
+    region: env.AWS_REGION,
+    bucket: env.AWS_S3_BUCKET,
+    maxFileBytes: env.MEDIA_MAX_FILE_BYTES,
+    uploadUrlTtlSeconds: env.MEDIA_UPLOAD_URL_TTL_SECONDS,
+    downloadUrlTtlSeconds: env.MEDIA_DOWNLOAD_URL_TTL_SECONDS,
+    unattachedTtlSeconds: env.MEDIA_UNATTACHED_TTL_SECONDS,
+    sweepIntervalMs: env.MEDIA_SWEEP_INTERVAL_MS,
+  },
+
+  push: {
+    apiUrl: env.EXPO_PUSH_API_URL,
+    accessToken: env.EXPO_ACCESS_TOKEN,
+    requestTimeoutMs: env.PUSH_REQUEST_TIMEOUT_MS,
+    sweepIntervalMs: env.PUSH_SWEEP_INTERVAL_MS,
+    maxAttempts: env.PUSH_MAX_ATTEMPTS,
+    maxAgeSeconds: env.PUSH_MAX_AGE_SECONDS,
+    receiptDelaySeconds: env.PUSH_RECEIPT_DELAY_SECONDS,
+  },
+
   msg91: {
     apiBaseUrl: env.MSG91_API_BASE_URL,
     authKey: env.MSG91_AUTH_KEY,
