@@ -1,0 +1,616 @@
+# Implement Complete S3 Media Storage and WhatsApp-Style Media Sharing in Broadcast
+
+## Objective
+
+Implement a complete, secure, S3-backed media-sharing system throughout Broadcast.
+
+This includes AWS S3 integration, authenticated upload authorization, direct uploads, attachment metadata, secure downloads, local caching, media previews, the message composer, real-time delivery, and integration with direct chats, group chats and broadcast lists.
+
+This is an implementation task. Inspect the actual repositories, modify the code, add migrations and tests, run available checks, fix failures, and provide a final implementation report. Do not stop at a plan, scaffold or UI mockup.
+
+## 1. Existing architecture
+
+### Frontend repository: `broadcast`
+
+- Expo SDK `~57.0.26`
+- React Native `0.86.3`
+- React `19.2.3`
+- TypeScript `~6.0.3`
+- Expo Router
+- TanStack Query
+- Zustand
+- Expo SQLite
+- Expo SecureStore
+- Expo Contacts
+- React Native Safe Area Context
+
+**Hard requirement: the app must continue to run in Expo Go.**
+
+Do not introduce native dependencies that require a custom development build for the core media-sharing experience. Use Expo-compatible APIs and SDK-matched package versions.
+
+### Backend repository: `broadcast-backend`
+
+- Node.js 24
+- TypeScript
+- Fastify
+- PostgreSQL
+- Redis
+- WebSockets
+
+The existing app has authentication through MSG91 mobile OTP, direct chats, group chats, broadcast lists, contact discovery, message delivery, read receipts and a shared design system.
+
+Inspect the real code before changing it.
+
+### AWS S3 configuration
+
+The private bucket has already been created.
+
+```env
+AWS_REGION=ap-south-1
+AWS_S3_BUCKET=holler-media-prod-998
+```
+
+The backend `.env` also contains local-development AWS credentials.
+
+Never place AWS access keys, secret keys or administrative credentials in the frontend, `EXPO_PUBLIC_*` variables, source code, logs or committed files.
+
+Use the backend's existing AWS credential-provider configuration for local development and production.
+
+### Existing database
+
+The application already has a `message_attachments` table with fields including:
+
+- `id`
+- `message_id`
+- `type`
+- `storage_key`
+- `mime_type`
+- `file_name`
+- `file_size`
+- `width`
+- `height`
+- `duration_ms`
+- `thumbnail_storage_key`
+- `encryption_metadata`
+
+Inspect the actual schema, foreign keys, constraints and migrations. Reuse the existing attachment model and extend it only where required.
+
+Do not create a second attachment system or store large file contents in PostgreSQL.
+
+## 2. Study WhatsApp's media-sharing workflow
+
+Use these official references to guide the product behavior:
+
+- Sending media, documents and forwarding: https://faq.whatsapp.com/453914586839706/
+- HD photos and videos: https://faq.whatsapp.com/759301289012856/
+- WhatsApp messaging and large file sharing: https://www.whatsapp.com/messaging
+
+Implement the core user experience, not a pixel-perfect clone.
+
+The experience should feel familiar to WhatsApp users:
+
+1. Open a direct chat or group chat.
+2. Tap an attachment/plus button near the message composer.
+3. Choose Photos & Videos, Camera, or Document.
+4. Select one or multiple attachments where supported.
+5. Review selected media before sending.
+6. Optionally add captions.
+7. See upload progress and send status.
+8. Send the message.
+9. Recipients see media previews inline in the conversation.
+10. Tapping media opens an appropriate full-screen viewer or document-opening experience.
+
+Reuse the existing Broadcast visual design system, navigation, chat components and interaction patterns.
+
+## 3. Inspect and install Expo-compatible packages
+
+Inspect the current `package.json`, installed dependencies and Expo SDK compatibility.
+
+Use Expo's version-aware installer for compatible versions of packages such as:
+
+- `expo-image-picker`
+- `expo-document-picker`
+- `expo-file-system`
+- `expo-video`
+- `expo-audio` if recording or playback requires it
+- `expo-sharing`
+- `expo-media-library` only if saving media to the device's gallery is implemented
+
+Do not install arbitrary package versions without checking compatibility.
+
+Do not introduce native-only dependencies into the core path.
+
+Verify the documented APIs for the exact installed package versions. Do not assume that a method or upload API from an older Expo release still applies.
+
+## 4. Implement the AWS S3 backend integration
+
+Install the appropriate AWS SDK v3 packages in the backend, including the S3 client and presigned URL utilities.
+
+Use the existing backend dependency and package-manager conventions.
+
+Implement a dedicated media service responsible for:
+
+- S3 client configuration.
+- Upload-session creation.
+- Presigned upload URL generation.
+- Upload finalization.
+- S3 object verification.
+- Attachment metadata persistence.
+- Authorized download URL generation.
+- Attachment deletion and cleanup.
+- Orphaned-upload reconciliation.
+
+Keep this service separate from route handlers and UI concerns.
+
+### Required S3 behavior
+
+- Bucket: `holler-media-prod-998`
+- Region: `ap-south-1`
+- Private objects only.
+- No public object ACLs.
+- No permanent public media URLs.
+- No AWS credentials sent to the frontend.
+- Short-lived presigned URLs.
+- Server-generated unique object keys.
+- Correct MIME type and content-length handling.
+- Appropriate cache headers for private media.
+- Support for safe object deletion when authorized.
+- Appropriate S3 lifecycle configuration for incomplete multipart uploads.
+
+Use server-generated keys, for example:
+
+`attachments/{opaque-unique-id}/original`
+
+Do not include phone numbers, usernames, raw user-supplied filenames or other unnecessary personal data in S3 keys.
+
+Do not allow the client to select arbitrary S3 keys or overwrite another user's objects.
+
+### IAM and configuration
+
+Use the existing backend environment variables:
+
+```env
+AWS_REGION=ap-south-1
+AWS_S3_BUCKET=holler-media-prod-998
+```
+
+The backend must use its secure AWS credential provider.
+
+Do not commit real credentials. Inspect `.gitignore` and `.env.example` and update them as needed.
+
+Use the minimum required S3 permissions for the operations actually implemented.
+
+Do not disable Block Public Access or make the bucket public to simplify downloads.
+
+## 5. Implement secure upload sessions
+
+Implement authenticated upload-session creation and finalization APIs using the existing Fastify conventions.
+
+A typical lifecycle should be:
+
+1. The authenticated client requests an upload session with filename, intended media category, size and MIME type.
+2. The backend validates the request and applicable upload policy.
+3. The backend creates an upload-session record or equivalent durable state.
+4. The backend generates a unique object key and short-lived presigned upload URL.
+5. The client uploads the bytes directly to S3.
+6. The client calls the finalization endpoint.
+7. The backend verifies that the object exists and validates its actual metadata against the upload session.
+8. The backend marks the upload as ready for message attachment.
+9. The client sends a chat message referencing the authorized attachment ID.
+
+The backend must not accept an arbitrary client-supplied storage key as proof of upload ownership.
+
+A failed or abandoned upload must not create a visible message attachment.
+
+Prevent the same upload session from being finalized multiple times into duplicate attachment records.
+
+Presigned URL expiration must be short enough to reduce abuse but long enough for normal mobile uploads. Use an appropriate configurable default.
+
+### File validation
+
+Perform validation on both the client and backend.
+
+At minimum, validate:
+
+- File size.
+- Allowed file category.
+- MIME type.
+- File extension where relevant.
+- Filename length.
+- Upload ownership.
+- Upload-session status.
+- S3 object existence.
+- Actual object size.
+- Expected content type.
+- Authorization to attach the file to a message.
+
+Do not trust client-supplied MIME type or filename alone.
+
+Block executable and dangerous content types by default. Allow ordinary images, videos, audio and documents, including PDF, DOCX, XLSX, PPTX, CSV, TXT and other explicitly permitted document formats.
+
+For generic files, use a controlled allowlist and safe download/open behavior. Do not execute uploaded content.
+
+Where practical, validate file signatures or inspect content types beyond the supplied HTTP headers.
+
+### Size limits
+
+Start with a configurable default maximum of **50 MB per file**.
+
+Keep the maximum centralized in backend configuration and enforce it on the server.
+
+Do not silently increase limits simply because S3 permits larger objects.
+
+Implement the upload abstraction so that multipart upload can be added for larger files later. If multipart upload is implemented now, enforce limits for the entire upload, authorize every required operation and clean up incomplete uploads.
+
+Do not buffer entire large files in Node.js memory.
+
+## 6. Secure download and access control
+
+The S3 bucket remains private.
+
+Implement a backend endpoint that authorizes access to an attachment before issuing a presigned download URL.
+
+The backend must verify:
+
+- The attachment exists.
+- The associated message exists.
+- The authenticated user has permission to access that message.
+- The user is an authorized participant in the relevant direct chat or group.
+- For broadcast deliveries, access is authorized through the recipient's corresponding direct message.
+- The attachment has not been deleted, expired or otherwise made unavailable.
+
+Never assume that knowing an attachment UUID grants access.
+
+Do not expose another user's broadcast-list membership or list name when retrieving a broadcast attachment.
+
+Do not return permanent public S3 URLs.
+
+The download URL should be short-lived, and the client should refresh it when expired.
+
+Ensure that removed group members cannot use newly issued download URLs to access future restricted content.
+
+Document the unavoidable limitation that an already-issued presigned URL remains usable until expiry unless the object or its access conditions change.
+
+## 7. Attachment metadata and database migrations
+
+Inspect the existing `message_attachments` table first.
+
+Extend the existing schema only where necessary to support:
+
+- Upload-session state.
+- Upload ownership.
+- Object key.
+- Attachment category.
+- Original filename.
+- MIME type.
+- File size.
+- Image dimensions.
+- Video/audio duration.
+- Thumbnail object key.
+- Upload completion state.
+- Creation and deletion timestamps.
+- Optional checksum or integrity metadata.
+- Optional media-processing state.
+- Existing encryption metadata where applicable.
+
+Use appropriate foreign keys, indexes, unique constraints and delete behavior.
+
+Do not store the actual file bytes in PostgreSQL or SQLite.
+
+Do not create a visible message attachment until upload finalization and message creation succeed according to the chosen transaction model.
+
+Ensure migrations are reproducible. Do not silently destroy production data or rewrite applied migrations without a safe forward-migration strategy.
+
+## 8. Add the attachment composer to direct chats
+
+Integrate media selection into the existing direct-chat composer.
+
+Add an attachment/plus button that opens an attachment menu with:
+
+- Photos & Videos.
+- Camera.
+- Document.
+- Audio/file sharing if supported by the current Expo-compatible implementation.
+
+The camera action should allow taking a photo and, where supported, recording a video.
+
+The gallery picker should allow selecting multiple photos and videos, subject to a configurable count and file-size limit.
+
+The document picker should support the device's available file providers.
+
+Handle permission denial, cancellation, limited photo-library access, invalid files and picker failures gracefully.
+
+Do not require broad media-library access if the platform picker provides the necessary selected-file access without it.
+
+### Preview before sending
+
+Implement a media preview/composer screen or bottom sheet.
+
+It should show:
+
+- Selected items.
+- Image and video thumbnails.
+- Document filename, extension and file size.
+- Ability to remove selected items.
+- Ability to add more items where supported.
+- Caption input.
+- Per-item upload status.
+- Overall sending status.
+- Send and cancel actions.
+
+Support captions for photos, videos and documents.
+
+If several items are selected, maintain their order and make the send operation idempotent. Use separate attachment records and message records as appropriate, rather than embedding multiple large files into one database field.
+
+If per-item captions are supported, preserve the caption associated with each item.
+
+Do not create fake progress values or mark uploads complete before S3 confirms success.
+
+### Inline rendering
+
+Implement appropriate message renderers for:
+
+**Images**
+- Inline thumbnail.
+- Loading placeholder.
+- Full-screen viewer.
+- Download/retry states.
+- Original dimensions where available.
+
+**Videos**
+- Inline preview with play action.
+- Duration and file-size metadata where available.
+- Playback using Expo-compatible video support.
+- Loading and playback error states.
+
+**Documents**
+- File icon based on type.
+- Filename and size.
+- Download/open/share action.
+- Progress and failure state.
+
+**Audio**
+- Audio attachment row with playback controls where supported.
+- Duration and progress where available.
+- Correct behavior when the file cannot be played.
+
+**Generic files**
+- Safe attachment row with filename, type and size.
+- Download and share/open actions only when the platform supports them.
+
+Do not render every attachment as a generic text bubble.
+
+## 9. Photos, video quality and previews
+
+Provide an appropriate media-sharing quality policy.
+
+- Preserve the original file by default unless the user selects a supported quality or compression option.
+- Where feasible, provide a Standard/HD choice for photo and video sharing.
+- Do not claim that HD quality is available if no corresponding behavior is implemented.
+- Never silently recompress documents or generic files.
+- Avoid expensive client-side processing for large videos.
+- Use thumbnails for message lists instead of downloading original video files.
+- Use a suitable Expo-compatible image processing package only if needed and compatible with Expo Go.
+
+For the initial implementation, it is acceptable to omit sophisticated video transcoding, but document that limitation.
+
+Do not create a thumbnail-processing service unless it is actually implemented. If thumbnails are generated asynchronously, persist processing status and handle failures.
+
+## 10. Upload progress, retries and local caching
+
+Use Expo-compatible file APIs to transfer files without reading large files entirely into JavaScript memory.
+
+Implement:
+
+- Upload progress.
+- Download progress where supported.
+- Cancel upload.
+- Retry failed upload.
+- Retry failed download.
+- Network interruption handling.
+- Expired presigned URL recovery.
+- App restart recovery for pending upload metadata.
+- Cleanup of abandoned local temporary files.
+- Local attachment cache indexing.
+
+Use SQLite for local metadata and download state, not as the remote media store.
+
+Keep downloaded media in an appropriate app-controlled filesystem location.
+
+Use deterministic local cache identifiers derived from stable attachment IDs. Do not treat cached files as authoritative server state.
+
+Avoid unbounded cache growth. Implement reasonable cache cleanup and avoid deleting files that are actively being displayed or uploaded.
+
+Ensure that cached attachments are associated with the correct account and do not leak between accounts after logout or account switching.
+
+## 11. Group chat integration
+
+Reuse the same attachment pipeline for group messages.
+
+- An authorized group member uploads media through the shared service.
+- The attachment is linked to the group's normal message record.
+- Eligible current group members receive the message metadata through the existing delivery mechanism.
+- Recipients download the attachment through the authorized endpoint.
+- Removed members cannot access new group content.
+- Message ordering, sender information, delivery receipts and read receipts remain consistent.
+- Group media must not be delivered to unrelated users.
+- Do not create a separate group attachment system.
+
+Reuse existing group role and membership authorization services.
+
+Do not trust a client-supplied group ID without checking current membership and posting permissions.
+
+## 12. Broadcast list integration
+
+Reuse the same media service for broadcast lists.
+
+A single broadcast send operation should produce the appropriate recipient-specific direct messages using the existing broadcast delivery architecture.
+
+Each recipient sees the attachment in their ordinary one-to-one chat with the sender.
+
+Recipients must not see the broadcast list's name or the other recipients.
+
+Use the same S3 object for a shared attachment when safe and appropriate, rather than uploading identical bytes once per recipient. However, each resulting message must have a valid attachment relationship and independently authorized access.
+
+Do not duplicate the underlying S3 object unnecessarily.
+
+Ensure that:
+- Recipient-specific delivery records remain correct.
+- Delivery and read receipts update the right recipient.
+- Failed deliveries can be retried without duplicate messages.
+- List deletion does not delete already-delivered direct-chat messages.
+- Access to a broadcast attachment is authorized through the actual recipient-specific message.
+
+## 13. Notifications and real-time delivery
+
+Integrate attachments with the existing message and WebSocket architecture.
+
+- Notify eligible recipients about new attachment messages.
+- Do not broadcast private attachment metadata to unauthorized users.
+- Update last-message previews using safe text such as "Photo", "Video", "Document" or "Audio" when the actual media content is not available to the list view.
+- Do not include private S3 credentials or permanent URLs in WebSocket events.
+- Do not rely on a WebSocket event alone for durable attachment creation.
+- Persist the message and attachment relationship before acknowledging the message as accepted.
+- Handle duplicate events and reconnects without duplicate visible attachments.
+- Keep message delivery and media upload states distinct.
+
+A message whose upload has not completed must not be delivered as if the attachment were available.
+
+## 14. Storage cleanup and lifecycle
+
+Implement cleanup for:
+
+- Abandoned upload sessions.
+- Uploaded objects never attached to a valid message.
+- Deleted attachments whose retention policy permits object deletion.
+- Orphaned thumbnails.
+- Incomplete multipart uploads.
+
+Do not delete an S3 object merely because one recipient deleted or hid a message if other valid messages still reference that object.
+
+If objects are shared by multiple message attachments, use reference tracking or another safe cleanup policy.
+
+Use idempotent cleanup operations and log only safe operational metadata.
+
+Add an S3 lifecycle rule for aborting incomplete multipart uploads if multipart upload is used. Do not make the bucket public or introduce unnecessary storage permissions.
+
+## 15. Security and privacy
+
+- Keep the S3 bucket private.
+- Never expose AWS credentials in the frontend.
+- Use short-lived presigned URLs.
+- Authorize every upload and download.
+- Validate file size and type on the server.
+- Use generated object keys.
+- Prevent path traversal and key injection.
+- Prevent unauthorized attachment ID enumeration.
+- Rate-limit upload-session creation and download URL issuance.
+- Prevent duplicate finalization and unauthorized deletion.
+- Avoid logging signed URLs, secrets, full file contents or unnecessary personal information.
+- Do not trust client-supplied sender IDs, recipient IDs or ownership claims.
+- Use HTTPS for all production network traffic.
+- Handle error responses without leaking bucket configuration or credentials.
+
+### E2EE boundary
+
+OpenE2EE integration has not yet been completed.
+
+Do not claim that S3 server-side encryption or HTTPS makes attachments end-to-end encrypted.
+
+For this implementation:
+- Keep attachment storage metadata compatible with future client-side encryption.
+- Do not invent a custom encryption scheme.
+- Do not put private cryptographic keys in PostgreSQL or S3.
+- Do not claim that the backend cannot read file contents while client-side E2EE is not implemented.
+- Document how the current storage design can later support encrypted blobs, encrypted thumbnails and client-side key management.
+
+## 16. Expo Go compatibility
+
+Expo Go must remain supported throughout this task.
+
+Before adding dependencies:
+1. Verify their Expo SDK 57 compatibility.
+2. Use `npx expo install` where appropriate.
+3. Check whether the required APIs are available in Expo Go.
+4. Avoid native-only modules that require custom native code for the core flow.
+5. Ensure app configuration and permissions are appropriate for iOS and Android.
+
+Use `expo-image-picker` for image/video selection and camera access where suitable, `expo-document-picker` for documents, and compatible Expo file, video, audio and sharing APIs for their respective functions.
+
+Handle platform-specific differences and permission denial gracefully.
+
+Do not hardcode device dimensions or compromise the existing safe-area design.
+
+## 17. Tests
+
+Add automated tests using the existing project test conventions.
+
+### Backend tests
+
+- Authenticated upload-session creation.
+- Unauthorized upload rejection.
+- Invalid MIME type rejection.
+- File-size limit enforcement.
+- Invalid or expired upload session rejection.
+- Object verification during finalization.
+- Duplicate finalization prevention.
+- Attachment metadata persistence.
+- Authorized download URL generation.
+- Cross-account attachment access rejection.
+- Group membership enforcement.
+- Broadcast recipient access enforcement.
+- Attachment deletion and orphan cleanup.
+- Idempotent message/attachment creation.
+- Correct behavior when S3 or PostgreSQL is unavailable.
+
+### Frontend tests
+
+- Open the attachment menu.
+- Select photos/videos and documents.
+- Cancel the picker.
+- Validate selected files.
+- Preview multiple attachments.
+- Remove an attachment before sending.
+- Add captions.
+- Upload and display progress.
+- Retry failed uploads.
+- Render images, videos, documents and audio appropriately.
+- Download/open attachments.
+- Handle expired download URLs.
+- Avoid duplicate attachments after retry.
+- Preserve direct-chat, group-chat and broadcast-list behavior.
+
+Use mocked S3 only for unit tests where appropriate. Include integration tests for the actual backend upload-session and authorization behavior. Never treat a mocked upload as proof that a real S3 transfer works.
+
+## 18. Verification and final report
+
+After implementation:
+
+1. Run frontend lint, typecheck and tests.
+2. Run backend lint, typecheck and tests using the actual package scripts.
+3. Run database migration checks.
+4. Verify the S3 configuration and required IAM permissions without exposing secrets.
+5. Test real uploads and downloads with small sample files where AWS credentials are available.
+6. Verify access control across direct chats, groups and broadcast lists.
+7. Test on Expo Go for the supported media types.
+8. Inspect the final diff for credential leaks, public URLs, unauthorized downloads, plaintext assumptions, dead code and duplicate attachment systems.
+9. Fix implementation-related failures.
+10. Report any checks that could not be executed rather than claiming success.
+
+Return a final report containing:
+
+- AWS S3 architecture.
+- Dependencies added.
+- Database migrations.
+- APIs added or changed.
+- IAM permissions required.
+- Upload and download flows.
+- File type and size limits.
+- Direct, group and broadcast integration details.
+- Local cache behavior.
+- Expo Go compatibility.
+- Exact commands to configure and run the feature.
+- Actual test results.
+- Known limitations and remaining work.
+
+The final result must allow a real user to select media, upload it to the private S3 bucket, send it through a direct chat or group, and allow authorized recipients to retrieve and view the attachment. Broadcast lists must reuse the same media pipeline without exposing recipient identities.

@@ -1,0 +1,29 @@
+Continue the Broadcast E2EE project using the completed pre-implementation audit report.
+
+Implement **Stage 2 only: the local OpenE2EE cryptographic foundation**.
+
+### Requirements
+
+1. Pin `@open-e2ee/signal-protocol-sdk` to the audited version `11.0.0`. Preserve the required license notices.
+2. Install `react-native-get-random-values` and load it before any OpenE2EE SDK call.
+3. Enable SQLCipher using the documented Expo SQLite config plugin.
+4. Configure the required Expo development-build/EAS setup without switching to bare React Native.
+5. Keep the SDK-owned encrypted protocol database separate from the existing `broadcast.db`.
+6. Use `expoStore()` and the SDK's documented `ExpoSecureStoreSignalProtocolSecretVault` integration.
+7. Implement a safe, singleton SDK initialization service. Prevent duplicate store opens and duplicate client initialization. Handle logout and cleanup according to the SDK lifecycle.
+8. Fail closed if secure storage or SQLCipher initialization fails. Never silently fall back to plaintext protocol storage.
+9. Add an automated cryptographic round-trip test using the actual SDK: one identity encrypts a message and another identity successfully decrypts it. Verify tampering is rejected.
+10. Add tests for initialization failures, restart/session persistence where supported by the test environment, and cleanup.
+11. Add a small development-only diagnostic that confirms successful SDK initialization without exposing keys, session state or message contents.
+12. Update iOS encryption export-compliance configuration appropriately for the actual cryptography used. Do not claim the App Store compliance requirement is satisfied without verification.
+13. Preserve Expo Go usability for unrelated existing features, but clearly document that the OpenE2EE SQLCipher store requires a development or release build.
+14. Do not implement relay integration, production identity assertions, groups, broadcast encryption, attachment encryption, or message transport changes in this stage.
+15. Do not clear, truncate, migrate or delete existing application messages or databases. No destructive data operation is authorized in this task.
+
+### Verification
+
+Run type checking, linting and relevant tests. Build the development app for at least one available native platform if the environment permits. Clearly distinguish build/test results from steps requiring a physical device.
+
+Report the files changed, dependencies pinned, SQLCipher configuration, actual cryptographic test results and any remaining blockers.
+
+Do not claim Broadcast is E2EE after this stage. This stage establishes the local cryptographic foundation only.

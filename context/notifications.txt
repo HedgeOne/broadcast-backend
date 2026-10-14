@@ -1,0 +1,413 @@
+# Implement Production-Ready Push Notifications and Chat/Group Mute Settings
+
+You are working on **Broadcast**, a WhatsApp-inspired messaging application.
+
+## 1. Existing architecture and constraints
+
+The project has two repositories:
+
+- Frontend: `~/Desktop/broadcast`
+- Backend: `~/Desktop/broadcast/broadcast-backend`
+
+Frontend:
+- Expo React Native, TypeScript, Expo Router.
+- Expo SDK 57.
+- Existing `expo-notifications` dependency is present.
+- React Query, Zustand, Expo SecureStore, Expo SQLite and NetInfo are already used.
+- Follow the existing theme/design system, API client, authentication, navigation and state-management patterns.
+
+Backend:
+- Node.js 24, TypeScript and Fastify.
+- PostgreSQL and Redis.
+- WebSockets at `/ws`.
+- Existing mobile OTP authentication.
+- Existing `devices`, `users`, `chats`, `chat_members`, `groups`, `group_members`, `messages`, `broadcast_lists`, `broadcast_list_members` and related tables.
+- Existing direct messaging, read receipts, delivery receipts and blocking/reporting functionality.
+
+Inspect both repositories before implementing anything. Identify the actual schema, migrations, route registration, authentication middleware, message persistence flow, WebSocket behavior, device model, notification-related dependencies, and existing chat/group settings screens.
+
+Do not assume paths or table columns from this specification exist exactly as written. Adapt the implementation to the real codebase.
+
+## 2. Objective
+
+Implement an end-to-end, production-minded push notification system for:
+
+1. Incoming one-to-one messages.
+2. Incoming group messages.
+3. Notification registration and lifecycle management for multiple devices per user.
+4. Tapping a notification to open the correct conversation.
+5. Per-chat mute preferences.
+6. Per-group mute preferences.
+7. Automatic expiry of timed mutes.
+8. Foreground notification handling and unread-state synchronization.
+9. Robust retries, invalid-token handling, authorization, logging and tests.
+
+Do not build a disconnected notification demo. Integrate notifications into the existing messaging flow.
+
+Do not claim that push notifications are working merely because an Expo token was generated or a request was queued. Verify the complete implementation and clearly distinguish automated tests from tests that require real devices or credentials.
+
+## 3. Notification delivery architecture
+
+Use the Expo Push Service initially, with `expo-notifications` on the client. Expo forwards notifications to APNs on iOS and FCM on Android.
+
+Use the existing dependency versions compatible with Expo SDK 57. Install or change dependencies only when necessary, using `pnpm` and `npx expo install` where appropriate.
+
+Do not introduce a separate push provider unless the existing implementation requires it or you document a concrete reason.
+
+### Message processing
+
+When a message is sent:
+
+1. Authenticate the sender and authorize the operation using existing rules.
+2. Persist the message and required recipient/delivery state.
+3. Commit the database transaction.
+4. Schedule notification processing after the message transaction succeeds.
+5. Identify eligible recipients and their active push-enabled devices.
+6. Apply mute preferences, membership, blocking, privacy and notification eligibility checks.
+7. Queue push jobs durably and process them asynchronously.
+8. Record delivery-provider outcomes and retry transient failures.
+
+Prefer the existing outbox/queue architecture if one exists. Otherwise, introduce a durable PostgreSQL-backed notification outbox or an equivalent reliable mechanism. Redis may be used as a queue accelerator, but do not make message delivery dependent on an ephemeral Redis job with no recovery mechanism.
+
+Never send a push before the message is committed. A push failure must not cause a successfully persisted message to fail.
+
+Ensure retries cannot create duplicate application messages or duplicate logical notification jobs. Where provider delivery is ambiguous, avoid claiming exactly-once delivery; use stable notification/job IDs and best-effort duplicate suppression.
+
+### Recipient selection
+
+Direct messages:
+- Notify the other participant, not the sender.
+- Handle the sender's other devices separately from the recipient's devices.
+- Apply the recipient's chat mute setting.
+
+Group messages:
+- Notify eligible group members, excluding the sender.
+- Verify current membership and any applicable group-level restrictions.
+- Apply each recipient's own mute preference for that group.
+- Never use one member's mute preference to suppress notifications for everyone.
+- Handle group membership changes between message creation and notification processing safely.
+
+Do not notify blocked users or violate existing privacy/security rules.
+
+Do not notify a recipient about a message they authored just because they have another device.
+
+### Foreground behavior
+
+Use the existing WebSocket/message synchronization architecture while the app is active.
+
+Avoid displaying a redundant operating-system notification when the user is actively viewing the same conversation and receiving its messages in real time. Use a reliable current-conversation/foreground state rather than assuming every foreground message should be suppressed.
+
+When the user is on another screen, implement a sensible foreground notification behavior consistent with the app's existing UX.
+
+The server remains authoritative for mute decisions. Client-side suppression alone is insufficient.
+
+## 4. Device token registration and lifecycle
+
+Implement robust client registration using `expo-notifications`.
+
+### Client behavior
+
+- Configure the Android notification channel before requesting permissions or registering the push token.
+- Request permission contextually and respectfully. Do not repeatedly prompt after denial.
+- Obtain an Expo push token using the correct EAS project ID from the app's actual configuration.
+- Do not hardcode a guessed EAS project ID.
+- Register the token with the authenticated backend.
+- Re-register/update the token when it changes.
+- Reconcile registration on app startup/login and after relevant permission changes.
+- Gracefully handle denied permissions, network failures, missing configuration, offline startup and token acquisition errors.
+- Unregister or deactivate the device token on logout according to the existing session/device model.
+- Never deactivate a token still legitimately associated with another active session unless the existing security model requires it.
+- Support multiple devices per user.
+- Do not log authentication credentials or full push tokens unnecessarily.
+
+Use the existing `devices` table if it can represent push-token registration safely. Otherwise, introduce a dedicated device-push-token table linked to users/devices.
+
+A suitable model should capture:
+- User/device association.
+- Expo push token.
+- Platform.
+- Active/revoked status.
+- Creation and last-registration timestamps.
+- Last successful send and relevant error metadata where appropriate.
+
+Add a unique constraint or equivalent protection against duplicate token registrations.
+
+Do not use the phone number as a push-token identity. Authentication and device-token identity are separate concerns.
+
+### Backend registration API
+
+Design endpoints consistent with the existing API conventions. For example:
+
+- Register/update the authenticated device's Expo push token.
+- Revoke/deactivate the authenticated device's push token.
+- Optionally expose the user's notification permission/registration status if the UI needs it.
+
+Derive the user and authorized device from the authenticated session. Never accept an arbitrary user ID as proof of ownership.
+
+Validate request schemas, token formats, platform values and rate limits.
+
+## 5. Notification payloads and privacy
+
+Use a minimal payload that identifies the event and destination without exposing unnecessary message content.
+
+Suggested data fields:
+- `type`: direct message or group message.
+- `chatId`: authorized conversation ID.
+- `messageId`: persisted message ID.
+- `groupId`: only where applicable and consistent with the routing model.
+- A stable notification/job identifier where useful.
+
+Do not trust identifiers received from a push notification without validating them through normal authenticated APIs.
+
+**Default to privacy-preserving notifications.** Do not put message text, attachment URLs, phone numbers, authentication tokens or other sensitive content in push payloads.
+
+Use a generic notification title/body initially, such as:
+- Direct chat: "New message"
+- Group: "New group message"
+
+If the existing product already has a notification-preview preference, honor it. Otherwise, keep previews generic and do not invent a nonfunctional settings toggle. A richer preview setting can be added separately if needed.
+
+This privacy requirement is especially important because end-to-end encryption is not currently established as functional in this project. Do not claim E2EE. TLS, S3 encryption at rest and private push payloads are not equivalent to E2EE.
+
+## 6. Sending notifications through Expo
+
+Implement a backend notification provider/service that sends queued jobs to the Expo Push API.
+
+Requirements:
+- Batch requests according to Expo's documented limits.
+- Process push tickets and subsequent push receipts.
+- Handle invalid or unregistered tokens by deactivating the affected token.
+- Retry transient network errors, rate limits and temporary provider failures with bounded exponential backoff and jitter.
+- Do not retry permanent payload or token errors indefinitely.
+- Respect provider limits and prevent an outage from creating an unbounded queue.
+- Track queued, processing, accepted, delivered-to-provider/device where actually known, failed and retryable states accurately.
+- Distinguish Expo accepting a request from the notification actually appearing on a device. Do not treat an Expo push ticket as proof that the user saw the notification.
+- Include operational logging and metrics without recording message contents or sensitive credentials.
+
+Use a configurable provider endpoint and sensible timeouts. Never send push notifications directly from the mobile app using privileged credentials.
+
+All Expo access tokens or other server-side secrets must remain on the backend. Do not add secrets to Expo public configuration or commit them to Git.
+
+Document required environment variables and deployment configuration without exposing their values.
+
+## 7. Mute notifications for individual chats
+
+Implement mute controls in the existing direct-chat settings/details page.
+
+UI:
+- A clear "Mute notifications" row with an on/off control.
+- When enabled, allow the user to select:
+  - 8 hours
+  - 1 week
+  - Always
+- Display the selected duration or muted status.
+- Allow immediate unmuting.
+- Provide loading, error and success feedback using existing UI patterns.
+- Prevent duplicate submissions and keep the screen synchronized with server state.
+
+If the direct-chat settings screen does not exist, inspect the current navigation and build the smallest consistent screen needed to expose this feature. Do not create duplicate settings systems.
+
+## 8. Mute notifications for groups
+
+Implement equivalent controls in the existing Group Info/settings page.
+
+UI:
+- A "Mute notifications" row with an on/off control.
+- Duration choices: 8 hours, 1 week, Always.
+- Visible muted state and remaining expiry where practical.
+- Immediate unmute.
+- Loading/error handling.
+
+Muting is personal to the current user. It must not modify group-wide notification behavior or other members' preferences.
+
+Do not restrict muting to group admins. Every eligible group member should be able to manage their own notification preferences.
+
+Use the existing group membership and authorization rules to ensure only group members can read or update their own preference.
+
+## 9. Mute data model and expiry semantics
+
+Create a per-user, per-conversation notification preference model using the existing schema if appropriate. Otherwise, add a migration.
+
+The model must support:
+- User ID.
+- Conversation ID or a correctly normalized chat/group reference.
+- Muted status.
+- Mute expiry timestamp, nullable for Always.
+- Created/updated timestamps.
+
+Prefer a normalized model that prevents conflicting chat and group records. Follow the actual domain model; do not blindly introduce a generic table if the existing schema already has a suitable design.
+
+Use database constraints to enforce uniqueness per user/conversation.
+
+Semantics:
+- Unmuted: no active mute.
+- Timed mute: mute remains active while the authoritative server time is before the expiry.
+- Always: active mute with no expiry.
+- Expired timed mute: notifications resume automatically without requiring the user to open the app.
+- Unmute: immediately removes the active mute.
+
+Use UTC timestamps and server-side time for expiry decisions. Never depend on the device clock.
+
+A background cleanup job may normalize expired records, but correctness must not depend on that job running. Notification eligibility must check whether the mute is active at send time.
+
+Do not store a duration alone and attempt to recalculate the expiry on every request.
+
+## 10. Mute API and authorization
+
+Implement endpoints consistent with the current API. Possible shapes include:
+
+- Read notification preferences for a direct chat.
+- Update/mute/unmute a direct chat.
+- Read notification preferences for a group.
+- Update/mute/unmute a group.
+
+Use existing route conventions where possible rather than forcing these exact paths.
+
+Requirements:
+- All endpoints require authentication.
+- The current user is derived from the authenticated session.
+- Direct-chat operations require valid conversation membership.
+- Group operations require current group membership.
+- A user can modify only their own preference.
+- Validate duration against the supported choices.
+- Do not accept arbitrary expiry values from clients; calculate expiry on the server.
+- Use idempotent update semantics.
+- Return the persisted preference and expiry state.
+- Handle removed group members and deleted conversations safely.
+- Apply rate limits and normal request validation.
+
+Do not expose another user's mute settings or reveal whether another participant has muted a chat.
+
+## 11. Notification taps and deep linking
+
+Integrate `expo-notifications` response listeners into the existing Expo Router root/layout architecture.
+
+Support opening the correct direct chat or group when:
+- The app is already foregrounded.
+- The app is backgrounded.
+- The app was terminated and opened by tapping the notification.
+
+Handle both the initial notification response and subsequent notification taps without registering duplicate listeners.
+
+Routing requirements:
+- Validate the payload structure before navigating.
+- Authenticate or restore the session before loading protected conversation data.
+- Fetch current conversation/message state through the existing API.
+- Verify the user still has access to the conversation.
+- If the conversation no longer exists or access was revoked, show a safe fallback rather than crashing.
+- Avoid duplicate navigation when the same response is processed more than once.
+- Do not mark a message read solely because a push arrived. Preserve existing read-receipt semantics and mark it read only through the app's established behavior.
+
+Use Expo Router's existing routing conventions. Do not invent route paths before inspecting the app.
+
+## 12. Android and iOS setup
+
+Inspect the actual Expo configuration and implement the required notification configuration for the existing SDK.
+
+Android:
+- Create an appropriately named default notification channel before permission/token registration.
+- Configure channel importance and sound consistently.
+- Respect OS-level notification settings.
+- Add only necessary permissions/configuration.
+
+iOS:
+- Configure push-notification support and permissions appropriately.
+- Ensure EAS/APNs credentials requirements are documented.
+- Respect denied/provisional/authorized permission states as applicable.
+
+Check the EAS project configuration and app identifiers. Do not invent IDs or credentials.
+
+**Important Expo Go constraint:** remote push notifications are unavailable in Expo Go on Android for these SDK versions. Keep the app usable in Expo Go, but do not claim real remote push is testable there. Use an appropriate Expo development build and/or release build for actual push testing on physical devices. Local notification previews in Expo Go are not proof that remote push works.
+
+Do not introduce native-only dependencies unrelated to the feature. Do not break the existing Expo Go development workflow for other functionality.
+
+## 13. Broadcast lists
+
+Do not expose a broadcast list's name, photo or recipient roster to other recipients through notification payloads.
+
+For now, inspect the existing broadcast delivery implementation and document whether broadcast messages are represented as normal direct messages or separate delivery records. Do not implement a second notification path that produces duplicate pushes for the same logical message.
+
+If broadcast messages already create ordinary recipient-specific direct messages, use the established notification pipeline and idempotency rules to prevent duplicates.
+
+Do not expand the scope into broadcast notification settings unless the existing model already supports them. The requested mute controls in this task are for direct chats and groups.
+
+## 14. Tests
+
+Add automated tests using the project's existing testing framework and conventions.
+
+Backend tests should cover:
+- Successful registration of a device push token.
+- Authentication and authorization failures.
+- Multiple devices per user.
+- Token update, revocation and invalid-token handling.
+- Direct message notification recipient selection.
+- Group notification recipient selection and sender exclusion.
+- Muted direct chat suppression.
+- Muted group suppression for only the muting user.
+- 8-hour and 1-week expiry calculations.
+- Always mute and manual unmute.
+- Automatic resumption after expiry, evaluated using server time.
+- Message transaction rollback does not emit a push.
+- Durable queue recovery and retry behavior.
+- Provider transient errors, permanent errors, rate limiting and invalid tokens.
+- Idempotency and duplicate job suppression.
+- Deleted conversation or changed membership before processing.
+- No sensitive message content in payloads or logs.
+
+Use a mocked Expo Push API/provider in unit and integration tests. Do not require real push credentials for the normal test suite.
+
+Frontend tests should cover:
+- Permission grant, denial and registration failures.
+- Token registration and token changes.
+- Direct-chat mute controls.
+- Group mute controls.
+- Duration selection and immediate unmute.
+- API errors and stale-state recovery.
+- Notification taps opening the correct authorized route.
+- Initial notification response handling.
+- Duplicate-listener prevention.
+
+Do not use fake application data as a substitute for integration with real API/state flows. Test fixtures are fine when clearly isolated to tests.
+
+## 15. Engineering standards
+
+- Follow existing architecture and naming conventions.
+- Add reversible database migrations.
+- Preserve existing messaging, delivery/read receipts, blocking, group membership and broadcast behavior.
+- Avoid unrelated refactors.
+- Use TypeScript types and runtime validation consistent with the existing stack.
+- Keep API and notification-provider code separated.
+- Add useful structured logs, but never log message bodies, secrets or complete sensitive payloads.
+- Do not introduce unnecessary dependencies.
+- Do not silently swallow failures.
+- Do not claim push delivery is guaranteed.
+- Do not claim E2EE.
+- Do not leave TODOs in place of required functionality.
+
+## 16. Final verification and report
+
+After implementation, run the relevant commands in both repositories, including:
+- Type checking.
+- Linting.
+- Existing automated tests.
+- New notification and mute tests.
+- Database migration validation or integration tests where available.
+
+Fix regressions introduced by your changes.
+
+At completion, provide a concise but detailed report containing:
+
+1. Architecture and message-to-push flow.
+2. Files created/modified.
+3. Database migrations and schema changes.
+4. API endpoints and authorization behavior.
+5. Frontend registration, notification tap handling and mute settings.
+6. Expo/APNs/FCM/EAS configuration required.
+7. Environment variables required, without revealing secret values.
+8. Commands executed and actual pass/fail results.
+9. Tests requiring physical devices or external credentials.
+10. Any incomplete functionality or external setup that remains.
+
+Do not report a command as passed if it was not run. Do not report a push notification as successfully received unless that has been verified on a device.
+
+Begin by inspecting both repositories and writing a brief implementation plan based on the actual codebase. Then implement the feature end-to-end.
