@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   foreignKey,
   index,
@@ -78,6 +79,10 @@ export const mediaUploads = pgTable(
 
     status: mediaUploadStatus("status").notNull().default("pending"),
     failureCode: text("failure_code"),
+
+    // True when the S3 object is client-side ciphertext (message attachments).
+    // Logical mimeType remains for UI; verification skips plaintext magic sniffing.
+    contentEncrypted: boolean("content_encrypted").notNull().default(false),
 
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     uploadExpiresAt: timestamptz("upload_expires_at").notNull(),

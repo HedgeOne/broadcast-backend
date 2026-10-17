@@ -33,6 +33,7 @@ export interface NewOutgoingMessage {
   clientMessageId: string;
   type: Message["type"];
   ciphertext: Buffer;
+  encryptedMetadata?: Buffer | null;
   replyToMessageId: string | null;
   mentions: string[];
   attachment: { uploadId: string; thumbnailUploadId?: string | undefined } | null;
@@ -70,12 +71,14 @@ export function replyPreview(
   if (!target || target.deletedAt !== null || target.sequence <= historyFrom) {
     return { id: replyToId, available: false, senderId: null, type: null, ciphertext: null };
   }
+  // Quote bodies live inside the encrypted payload on each device. The server
+  // must not reconstruct or return message plaintext in reply previews.
   return {
     id: target.id,
     available: true,
     senderId: target.senderId,
     type: target.type,
-    ciphertext: target.ciphertext.toString("base64"),
+    ciphertext: null,
   };
 }
 

@@ -561,6 +561,7 @@ describe("chat features", () => {
         clientMessageId: randomUUID(),
         type: "text",
         ciphertext: encodeText(body),
+        protocol: "opene2ee-v1",
       });
       expect(response.statusCode, response.body).toBe(201);
       return response.json<{ broadcast: BroadcastBody }>().broadcast;

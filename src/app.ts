@@ -10,6 +10,7 @@ import { logger } from "./lib/logger.js";
 import { authModule, type AuthModuleOptions } from "./modules/auth/index.js";
 import { chatsModule, type ChatsModuleOptions } from "./modules/chats/index.js";
 import { contactsModule, type ContactsModuleOptions } from "./modules/contacts/index.js";
+import { e2eeModule } from "./modules/e2ee/index.js";
 import {
   notificationsModule,
   type NotificationsModuleOptions,
@@ -63,6 +64,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(contactsModule, options.contacts ?? {});
   await app.register(notificationsModule, options.notifications ?? {});
   await app.register(chatsModule, options.chats ?? {});
+  await app.register(e2eeModule);
   await app.register(privacyModule);
 
   return app;

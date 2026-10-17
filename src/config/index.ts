@@ -96,4 +96,11 @@ export const config = {
     otpExpiryMinutes: env.AUTH_OTP_TTL_SECONDS / 60,
     timeoutMs: env.MSG91_TIMEOUT_MS,
   },
+
+  e2ee: {
+    relayUrl: env.OPEN_E2EE_RELAY_URL,
+    assertionSecret: env.OPEN_E2EE_ASSERTION_SECRET,
+    assertionIssuer: env.OPEN_E2EE_ASSERTION_ISSUER,
+    assertionAudience: env.OPEN_E2EE_ASSERTION_AUDIENCE,
+  },
 } as const;

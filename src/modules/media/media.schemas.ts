@@ -21,8 +21,19 @@ export const createUploadBody = z
     width: z.number().int().min(1).max(MAX_DIMENSION).nullish(),
     height: z.number().int().min(1).max(MAX_DIMENSION).nullish(),
     durationMs: z.number().int().min(0).max(MAX_DURATION_MS).nullish(),
+    // Message attachments only: object bytes are OpenE2EE streaming AEAD ciphertext.
+    contentEncrypted: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((body, ctx) => {
+    if (body.contentEncrypted && (body.purpose ?? "attachment") !== "attachment") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["contentEncrypted"],
+        message: "Only message attachments may be content-encrypted.",
+      });
+    }
+  });
 
 export const uploadParams = z.object({ uploadId: z.uuid() });
 export const attachmentParams = z.object({ attachmentId: z.uuid() });

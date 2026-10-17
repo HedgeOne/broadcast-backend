@@ -46,18 +46,38 @@ export const updateListBody = z
 
 export const addRecipientsBody = z.object({ recipientIds }).strict();
 
-// The same body a direct message takes; it is written unchanged into each
-// recipient's direct chat. A media broadcast uploads the file once; every
-// recipient's message points at that one object.
+// Opaque OpenE2EE pointer for the owner's history. Per-recipient plaintext is
+// delivered only through the Signal Protocol Relay, never fan-out from here.
 export const sendBroadcastBody = z
   .object({
     clientMessageId: z.uuid(),
     type: messageType,
     ciphertext: messageCiphertext,
+    protocol: z.literal("opene2ee-v1"),
+    relayMessageId: z.string().trim().min(1).max(256).optional(),
     attachment: attachmentRef.optional(),
   })
   .strict()
-  .superRefine(checkMessageBody);
+  .superRefine(checkMessageBody)
+  .superRefine((body, ctx) => {
+    try {
+      const binary = Buffer.from(body.ciphertext, "base64").toString("utf8");
+      const parsed = JSON.parse(binary) as { v?: number; protocol?: string };
+      if (parsed?.v !== 1 || parsed.protocol !== "opene2ee-v1") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["ciphertext"],
+          message: "Ciphertext must be an OpenE2EE protocol pointer.",
+        });
+      }
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ciphertext"],
+        message: "Ciphertext must be an OpenE2EE protocol pointer.",
+      });
+    }
+  });
 
 export const historyQuery = z.object({
   before: z.uuid().optional(),

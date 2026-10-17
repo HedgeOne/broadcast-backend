@@ -51,6 +51,9 @@ export const sendMessageBody = z
     clientMessageId: z.uuid(),
     type: messageType,
     ciphertext: messageCiphertext,
+    // Required for new sends. Legacy Base64 UTF-8 plaintext is rejected.
+    protocol: z.literal("opene2ee-v1"),
+    relayMessageId: z.string().trim().min(1).max(256).optional(),
     attachment: attachmentRef.optional(),
     replyToMessageId: z.uuid().optional(),
     // Group members referenced as @{userId} in the body.
@@ -60,7 +63,27 @@ export const sendMessageBody = z
       .transform((ids) => [...new Set(ids)])
       .optional(),
   })
-  .superRefine(checkMessageBody);
+  .superRefine(checkMessageBody)
+  .superRefine((body, ctx) => {
+    // Ciphertext must be an opaque protocol pointer, never recoverable UTF-8 plaintext.
+    try {
+      const binary = Buffer.from(body.ciphertext, "base64").toString("utf8");
+      const parsed = JSON.parse(binary) as { v?: number; protocol?: string };
+      if (parsed?.v !== 1 || parsed.protocol !== "opene2ee-v1") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["ciphertext"],
+          message: "Ciphertext must be an OpenE2EE protocol pointer.",
+        });
+      }
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ciphertext"],
+        message: "Ciphertext must be an OpenE2EE protocol pointer.",
+      });
+    }
+  });
 
 export const listMessagesQuery = z
   .object({

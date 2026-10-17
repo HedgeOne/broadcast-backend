@@ -151,6 +151,7 @@ describe("media", () => {
       clientMessageId: randomUUID(),
       type: "image",
       ciphertext: encodeText("caption"),
+      protocol: "opene2ee-v1",
       attachment: { uploadId },
       ...extra,
     });

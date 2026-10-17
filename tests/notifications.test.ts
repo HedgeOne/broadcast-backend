@@ -396,7 +396,17 @@ describe("push notifications", () => {
       const sent = await api(ctx, owner, "POST", `/broadcasts/${listId}/messages`, {
         clientMessageId: randomUUID(),
         type: "text",
-        ciphertext: Buffer.from(SECRET_TEXT).toString("base64"),
+        ciphertext: Buffer.from(
+          JSON.stringify({
+            v: 1,
+            protocol: "opene2ee-v1",
+            relayMessageId: "t",
+            clientMessageId: "00000000-0000-4000-8000-000000000001",
+            chatId: "00000000-0000-4000-8000-000000000002",
+          }),
+          "utf8",
+        ).toString("base64"),
+        protocol: "opene2ee-v1",
       });
       expect(sent.statusCode, sent.body).toBe(201);
       await drain();

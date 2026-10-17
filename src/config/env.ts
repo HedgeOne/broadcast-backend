@@ -130,6 +130,27 @@ const envSchema = z.object({
   MSG91_AUTH_KEY: required,
   MSG91_OTP_TEMPLATE_ID: required,
   MSG91_TIMEOUT_MS: positiveInt.default(10_000),
+
+  // OpenE2EE hosted relay. The connection URL is public; assertion secrets are not.
+  OPEN_E2EE_RELAY_URL: z.url({ protocol: /^https?$/ }).optional(),
+  OPEN_E2EE_ASSERTION_SECRET: z
+    .string()
+    .trim()
+    .transform((value) => value || undefined)
+    .optional()
+    .refine((value) => value === undefined || value.length >= 32, {
+      message: "must be at least 32 characters",
+    }),
+  OPEN_E2EE_ASSERTION_ISSUER: z
+    .string()
+    .trim()
+    .transform((value) => value || undefined)
+    .optional(),
+  OPEN_E2EE_ASSERTION_AUDIENCE: z
+    .string()
+    .trim()
+    .transform((value) => value || undefined)
+    .optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -25,8 +25,18 @@ export async function createUser(
   return { ...session, phone };
 }
 
-export function encodeText(text: string): string {
-  return Buffer.from(text, "utf8").toString("base64");
+/** Opaque OpenE2EE protocol pointer. Never encodes message plaintext. */
+export function encodeText(_text = ""): string {
+  return Buffer.from(
+    JSON.stringify({
+      v: 1,
+      protocol: "opene2ee-v1",
+      relayMessageId: `test-relay-${randomUUID()}`,
+      clientMessageId: randomUUID(),
+      chatId: randomUUID(),
+    }),
+    "utf8",
+  ).toString("base64");
 }
 
 export function api(
@@ -61,6 +71,7 @@ export function sendText(
     clientMessageId,
     type: "text",
     ciphertext: encodeText(text),
+    protocol: "opene2ee-v1",
   });
 }
 

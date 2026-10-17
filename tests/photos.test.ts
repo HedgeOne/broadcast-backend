@@ -182,6 +182,7 @@ describe("photos", () => {
         clientMessageId: randomUUID(),
         type: "image",
         ciphertext: encodeText(""),
+        protocol: "opene2ee-v1",
         attachment: { uploadId: photo.uploadId },
       });
       expect(response.statusCode).toBe(422);
@@ -600,6 +601,7 @@ describe("photos", () => {
         clientMessageId: randomUUID(),
         type: "text",
         ciphertext: encodeText("news"),
+        protocol: "opene2ee-v1",
       });
       const chats = await api(ctx, ben, "GET", "/chats");
       expect(chats.body).not.toContain(list.photoId ?? "none");

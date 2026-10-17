@@ -155,6 +155,9 @@ export async function sharedMedia(
   return { upload, thumbnail: thumbnail ?? null };
 }
 
+// Marker only — never file keys. Keys stay inside the OpenE2EE envelope.
+const E2EE_FILE_MARKER = Buffer.from(JSON.stringify({ v: 1, alg: "aes256-gcm-hkdf-1mb" }), "utf8");
+
 // The message's attachment row, copying the verified upload metadata.
 export async function insertAttachment(
   tx: Tx,
@@ -175,6 +178,7 @@ export async function insertAttachment(
       height: upload.height,
       durationMs: upload.durationMs,
       thumbnailStorageKey: thumbnail?.storageKey ?? null,
+      encryptionMetadata: upload.contentEncrypted ? E2EE_FILE_MARKER : null,
       uploadId: upload.id,
       thumbnailUploadId: thumbnail?.id ?? null,
     })

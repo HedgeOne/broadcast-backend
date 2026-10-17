@@ -140,7 +140,12 @@ describe("direct messaging", () => {
         id: chatId,
         peer: { id: ana.user.id, displayName: "Ana", blockedByMe: false },
         unreadCount: 1,
-        lastMessage: { sequence: 1, ciphertext: encodeText("hi"), senderId: ana.user.id },
+        lastMessage: {
+          sequence: 1,
+          ciphertext: encodeText("hi"),
+          protocol: "opene2ee-v1",
+          senderId: ana.user.id,
+        },
       });
     });
 
@@ -184,7 +189,9 @@ describe("direct messaging", () => {
       expect(response.statusCode).toBe(201);
       const { message } = response.json<{ message: MessageBody }>();
       expect(message).toMatchObject({ sequence: 1, clientMessageId });
-      expect(Buffer.from(message.ciphertext, "base64").toString("utf8")).toBe("Hello Ben");
+      const stored = Buffer.from(message.ciphertext, "base64").toString("utf8");
+      expect(stored).not.toContain("Hello Ben");
+      expect(JSON.parse(stored)).toMatchObject({ v: 1, protocol: "opene2ee-v1" });
 
       const { rows } = await pool.query("SELECT sequence FROM messages WHERE id = $1", [
         message.id,
@@ -237,6 +244,7 @@ describe("direct messaging", () => {
         clientMessageId: randomUUID(),
         type: "image",
         ciphertext: encodeText("x"),
+        protocol: "opene2ee-v1",
       });
       expect(image.statusCode).toBe(400);
       const notBase64 = await api(ctx, ana, "POST", `/chats/${chatId}/messages`, {

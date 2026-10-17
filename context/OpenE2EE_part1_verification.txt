@@ -1,0 +1,112 @@
+# Broadcast E2EE — Stage 2 Native Verification on M3
+
+## Context
+
+Broadcast is a React Native Expo messaging app with a Node.js/Fastify backend.
+
+Repositories:
+- Frontend: `~/Desktop/broadcast`
+- Backend: `~/Desktop/broadcast/broadcast-backend`
+
+Stage 2 has already been implemented:
+- `@open-e2ee/signal-protocol-sdk` pinned at version `11.0.0`.
+- `react-native-get-random-values` imported before the Expo Router entry point.
+- A separate SDK-owned SQLCipher database is used for protocol state.
+- `expoStore()` and `ExpoSecureStoreSignalProtocolSecretVault` are configured.
+- Expo SQLite has `useSQLCipher: true`.
+- The app refuses to initialize the protocol store in Expo Go and web environments.
+- SDK-level encryption/decryption tests and fail-closed tests pass.
+- The existing application database remains separate.
+- No existing data has been cleared.
+
+The previous iOS build failed during Xcode package dependency resolution. I now have access to a newer M3 Mac with Docker installed and have cloned both repositories.
+
+**Important:** Broadcast is NOT E2EE yet. Existing direct messages, groups, broadcast lists, attachments, and their transport must not be represented as encrypted.
+
+## Objective
+
+Verify Stage 2 on a real native iOS Simulator build and resolve any blockers. Do not begin relay integration or modify application message transport in this task.
+
+## 1. Inspect before changing anything
+
+Read the existing implementation, package scripts, Expo configuration, EAS profiles, SQLCipher setup, authentication lifecycle, protocol-store lifecycle, and tests.
+
+Do not assume previous build failures are fixed. Reproduce them and capture the first meaningful error.
+
+Do not delete databases, reset Docker volumes, reset test data, clear user data, regenerate lockfiles unnecessarily, or make destructive schema changes.
+
+## 2. Build and launch on iOS Simulator
+
+Verify:
+- Correct Node.js and pnpm versions for the project.
+- Expo SDK and native dependency compatibility.
+- Xcode version, selected developer directory, simulator runtime, and CocoaPods configuration.
+- Whether the generated native iOS project contains the expected SQLCipher configuration.
+- Whether Xcode package dependency resolution succeeds.
+- Whether the app can be built, installed, and launched on an iOS Simulator.
+
+Use the project's existing package manager and scripts. Preserve the current dependency lockfiles unless a justified, minimal fix is required.
+
+If the build fails, identify the root cause, make only necessary changes, and retry. Do not hide errors or declare success based solely on TypeScript checks.
+
+If the environment prevents completion, report the exact failing command and first actionable error. Do not claim native verification passed.
+
+## 3. Verify the actual SQLCipher-backed protocol store
+
+On the native simulator:
+- Confirm the protocol database opens successfully with SQLCipher enabled.
+- Create or load the SDK identity through the actual application startup and authentication lifecycle.
+- Perform an SDK encrypt/decrypt round trip using the real native store.
+- Stop and restart the protocol client, then verify persisted protocol state remains usable.
+- Verify store initialization fails closed when secure storage or encrypted database initialization fails.
+- Confirm Expo Go and web remain explicitly unsupported for this E2EE store.
+- Confirm the protocol database remains separate from `broadcast.db`.
+
+Do not inspect or log private keys, secret vault contents, plaintext message bodies, identity assertions, or sensitive tokens.
+
+If SQLCipher cannot be verified on the simulator, report the limitation clearly and do not substitute a mocked store as proof.
+
+## 4. Audit identity and account isolation
+
+Inspect the complete lifecycle for sign-in, sign-out, account switching, app restart, and protocol client shutdown.
+
+The existing app's device ID may survive logout. Do not assume that device ID alone safely scopes protocol identity.
+
+Verify:
+- Account A's protocol identity and sessions cannot be reused to send or decrypt as Account B.
+- Logout stops the protocol client and clears in-memory sensitive state.
+- Account switching cannot race with pending crypto operations or leave the previous account's store open.
+- Persisted protocol state is scoped to the correct authenticated account and device.
+- A failed identity/store initialization never falls back to plaintext messaging.
+- Identity replacement or re-registration behavior is explicit and tested.
+
+Do not indiscriminately wipe the protocol database on logout. Preserve legitimate persistence for the same account while preventing cross-account access. Any required migration must be non-destructive and documented.
+
+Add or update automated tests for any lifecycle defects found. Clearly distinguish unit tests from tests that require the native simulator.
+
+## 5. Preserve security boundaries
+
+Do not:
+- Implement hosted relay integration yet.
+- Change direct-message, group, broadcast-list, or attachment transport.
+- Claim existing messages are E2EE.
+- Add a plaintext fallback.
+- Put private keys in PostgreSQL, Redis, application logs, or ordinary app storage.
+- Introduce production credentials or use a development sandbox identity mechanism as production authentication.
+- Reset production or staging data.
+- Modify unrelated features to make tests pass.
+
+## 6. Verification and final report
+
+Run the relevant frontend and backend typechecks, lint checks, focused tests, and native build. Run the full test suite if practical, distinguishing unrelated existing failures from regressions.
+
+Report:
+1. Changes made, with file paths.
+2. Exact build and test commands executed and their outcomes.
+3. Whether the app was installed and launched in the iOS Simulator.
+4. Whether SQLCipher and the actual native protocol store were verified.
+5. Account-isolation and logout findings.
+6. Any unresolved blocker and the exact evidence.
+7. A clear verdict: VERIFIED, PARTIALLY VERIFIED, or BLOCKED.
+
+Do not begin Stage 3 automatically. Stop after reporting the verification results so the next implementation stage can be scoped safely.

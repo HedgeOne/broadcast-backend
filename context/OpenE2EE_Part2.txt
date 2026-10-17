@@ -1,0 +1,504 @@
+# Broadcast — Complete End-to-End Encryption Across the Entire Messaging Product
+
+## Mission
+
+Implement production-grade end-to-end encryption (E2EE) throughout the existing Broadcast application wherever it is not already correctly implemented.
+
+Work across both repositories:
+
+- Frontend: `~/Desktop/broadcast`
+- Backend: `~/Desktop/broadcast/broadcast-backend`
+
+Broadcast is a WhatsApp-like messaging application built with React Native, Expo, TypeScript, Expo Router, a Fastify/Node.js backend, PostgreSQL, Redis, WebSockets, SQLite, and private S3 media storage.
+
+The app uses OpenE2EE Signal Protocol SDK `@open-e2ee/signal-protocol-sdk@11.0.0`.
+
+**The current native implementation of 1:1 messaging with media has been tested successfully on two simultaneous iOS simulators. Treat that implementation as the working baseline. Do not restart the project, replace the protocol SDK, or redesign already-working components without a demonstrated technical reason.**
+
+The task is to finish the missing implementation across the product, not to repeat the previous milestone-verification exercise.
+
+Inspect the existing code to establish what is already implemented, preserve correct functionality, and implement the remaining gaps end to end. Do not stop after an audit, design document, or list of recommendations.
+
+## 1. Scope and non-negotiable security requirements
+
+### In scope
+
+1. One-to-one conversations.
+2. Group conversations.
+3. Broadcast lists and broadcast message delivery.
+4. Text messages and all existing message types.
+5. Photo, video, document, and audio attachments sent as messages.
+6. Replies, quoted messages, reactions, message actions, and other existing messaging features.
+7. Multi-device encryption and device lifecycle.
+8. Local message persistence, search, starred messages, shared content, and clear-chat behavior.
+9. Push notifications, WebSocket events, REST APIs, Redis, PostgreSQL, and S3 security boundaries.
+10. Identity verification and security-related UX.
+11. Existing offline messaging, delivery, read receipts, retries, and synchronization behavior.
+
+### Explicitly out of scope
+
+- Audio calls and video calls.
+- Status/stories.
+- Location sharing.
+
+Do not implement these excluded features as part of this task. Do not introduce new product features unrelated to E2EE.
+
+### Required invariants
+
+- No plaintext fallback, including on network failure, missing keys, unsupported clients, relay failures, or decryption errors.
+- Never represent Base64-encoded plaintext as ciphertext.
+- Do not send plaintext message content to the backend, relay, Redis, WebSockets, logs, analytics, crash reports, or push notification payloads.
+- Never upload unencrypted message attachments or derived previews to S3.
+- Private keys and secret protocol state must remain on the appropriate client device and in the SDK's protected storage.
+- Never store private identity keys or session secrets in PostgreSQL, Redis, ordinary application storage, or server logs.
+- Encryption and decryption must use the existing OpenE2EE SDK and supported protocol APIs. Do not implement custom cryptographic primitives.
+- If a message cannot be encrypted for all required recipients or devices, do not silently send it to a subset unless the product explicitly supports and clearly communicates that policy.
+- A successful API response or successful WebSocket delivery is not proof that a message is E2EE.
+- Preserve existing authorization, blocking, reporting, membership, and privacy rules.
+- Never claim the entire app is E2EE while any in-scope content path still sends plaintext.
+
+## 2. Establish the actual implementation boundary
+
+Read both repositories and trace the existing working 1:1 encryption implementation through the full lifecycle:
+
+- Compose message.
+- Resolve conversation and recipient devices.
+- Encrypt using the SDK.
+- Send through the existing API/relay/WebSocket architecture.
+- Persist and synchronize encrypted content.
+- Receive and decrypt on the destination device.
+- Persist local state.
+- Process acknowledgements, retries, and notifications.
+
+Reuse the working implementation. Refactor only where necessary to establish a shared, well-defined encryption boundary.
+
+Identify every existing message type, endpoint, event, database field, background task, and UI action that handles message content. Trace each path from its UI entry point to its storage and network destinations.
+
+Then implement the missing functionality. Do not stop after documenting the findings, and do not ask me to reconfirm the previous milestone.
+
+## 3. Implement a single coherent encrypted-message architecture
+
+Create or consolidate shared typed interfaces and services for:
+
+- Protocol identity and device registration.
+- Recipient-device resolution.
+- Encryption and decryption.
+- Encrypted message envelopes.
+- Group cryptographic state.
+- Broadcast-list delivery.
+- Encrypted attachment handling.
+- Message operation payloads.
+- Protocol error handling.
+- Key changes and identity verification.
+- Encrypted message persistence and synchronization.
+
+Follow the SDK's actual documented APIs and supported wire formats. Inspect the installed SDK types, official documentation, and existing implementation before designing interfaces.
+
+Do not invent SDK methods, cryptographic formats, relay endpoints, or protocol capabilities.
+
+Keep protocol-specific code isolated behind a maintainable service layer. UI components must not independently implement cryptography or bypass the shared encryption boundary.
+
+Define a versioned envelope format with explicit fields for protocol/version, encrypted payload, relevant identifiers, and supported message operation types. Preserve the SDK's authentication, integrity, replay protection, and session semantics. Do not add a second custom encryption layer unless the SDK explicitly requires it.
+
+Make incompatible protocol versions and unsupported message types fail closed.
+
+## 4. Complete group messaging E2EE
+
+Implement group messaging using the supported OpenE2EE group-messaging mechanism and its documented key-distribution and rotation procedures.
+
+Requirements:
+
+- Encrypt group message content for the authorized group devices using the SDK-supported group protocol.
+- Do not encrypt one message with a shared application-level key invented for convenience.
+- Ensure each group device obtains the appropriate cryptographic state securely.
+- Handle initial group creation and secure distribution of group cryptographic state.
+- Handle group member addition, removal, leaving, role changes, and device changes.
+- Rotate or refresh group cryptographic state whenever required by the protocol, particularly after membership removal.
+- Prevent removed members from decrypting messages sent after their removal, subject to the protocol's documented guarantees.
+- Prevent new members from accessing earlier message history unless that access is explicitly supported and authorized.
+- Handle simultaneous membership changes, offline members, retries, reconnects, and out-of-order events.
+- Make membership changes and key rotation transactional or recoverable so partial failures do not silently leave the group in an insecure state.
+- Ensure all active authorized recipient devices receive the required encrypted state and can decrypt messages.
+- Ensure the server cannot derive message plaintext from group state, message rows, or relay events.
+
+Keep group membership, permissions, and the metadata required for routing and authorization consistent with the existing product. Do not assume that hiding membership metadata is automatically required by E2EE.
+
+Use the SDK's actual group-membership-change and sender-key lifecycle APIs where applicable. Explicitly test the behavior when rotation fails or is omitted. Never rely on an SDK call silently succeeding as proof that rotation occurred.
+
+## 5. Complete broadcast-list E2EE
+
+A broadcast list is not equivalent to a group conversation.
+
+Implement broadcast delivery as independently encrypted recipient deliveries using the supported direct-message encryption mechanism.
+
+Requirements:
+
+- Resolve the authorized recipient accounts and their active devices.
+- Encrypt the broadcast content separately for each recipient device as required by the protocol.
+- Reuse the same logical message identifier where appropriate, while maintaining independent recipient delivery and cryptographic state.
+- Ensure one recipient cannot decrypt another recipient's envelope or learn other recipients through the message payload.
+- Do not expose the sender's broadcast-list roster or private list metadata to recipients.
+- Do not deliver a shared plaintext broadcast body to the backend for fan-out.
+- Do not copy plaintext from `broadcast_messages` into `messages`, Redis, or WebSocket payloads.
+- Keep per-recipient delivery status, read receipts, retry state, and authorization correct.
+- Handle recipient devices being offline, new devices, removed recipients, and partial delivery failures.
+- Prevent recipients from replying into a broadcast list as if it were a group unless that behavior already exists as an explicitly supported feature.
+
+Do not claim that broadcast encryption is complete until actual recipient devices decrypt their own messages and unauthorized devices cannot decrypt them.
+
+## 6. Encrypt every message-content path
+
+Inspect every existing message type and implement E2EE for all in-scope content.
+
+This includes, where supported by the existing app:
+
+- Text messages.
+- Replies and quoted message bodies.
+- Forwarded messages and any embedded original content.
+- Reactions and reaction changes.
+- Message edits, if an edit feature already exists.
+- Message deletion or revocation instructions where they carry content or affect encrypted message state.
+- Link previews and metadata derived from message content.
+- Shared-content records and in-chat document or media representations.
+- Any existing captions, transcripts, descriptions, or other text attached to a message.
+- Any other message operation that exposes content or can be forged to change the user's displayed conversation.
+
+Keep edits and deletions consistent across recipient devices. If a feature does not exist, do not invent a new API merely to claim coverage; document it as not applicable.
+
+A reply must not contain a plaintext quoted message in its server-visible DTO. Put the quote content inside the encrypted payload, or derive it locally from an already-decrypted original message.
+
+Treat reactions and message operations as authenticated protocol events. Prevent unauthorized users from forging reactions, edits, deletions, or other state changes by manipulating REST requests or WebSocket events.
+
+Keep delivery/read receipts as minimal authenticated delivery metadata where required by the product. Do not put message bodies in receipt events.
+
+## 7. Complete attachment and media encryption
+
+The existing direct-message media flow reportedly works with E2EE. Preserve it and reuse its proven implementation.
+
+Audit and complete every media-related path, including groups and broadcast lists.
+
+Requirements:
+
+- Encrypt attachment bytes on the sender's device before uploading to S3.
+- Encrypt photos, videos, documents, and audio files sent as messages.
+- Use the SDK's supported file-encryption APIs and format.
+- Store only encrypted attachment bytes in S3.
+- Keep file-encryption keys and any required decryption parameters inside the encrypted message payload.
+- Encrypt or securely handle thumbnails, previews, derived images, and other generated representations.
+- Never generate or upload a plaintext preview on the server.
+- Prevent public access to stored objects and preserve the existing private S3 and authorization model.
+- Use authenticated, expiring upload/download URLs where appropriate.
+- Do not put decryption keys in presigned URLs, object keys, HTTP headers visible to unrelated services, or logs.
+- Handle interrupted uploads/downloads, retries, corruption, tampering, expired URLs, MIME type validation, and file size limits.
+- Avoid reading large files entirely into memory when the SDK supports streaming; account for lower-memory devices.
+- Ensure a failed encryption step prevents upload.
+- Ensure a failed integrity check prevents the decrypted file from being presented as valid.
+- Ensure encrypted media remains decryptable on every authorized recipient device.
+
+Inspect S3 object metadata and any CDN, caching, scanning, or media-processing path. Ensure none can receive plaintext content. If a current feature requires server-side media processing, redesign it for client-side processing or document a genuine product limitation rather than silently weakening E2EE.
+
+## 8. Secure the backend, database, Redis, relay, and WebSocket paths
+
+Audit and modify the backend so the server routes and stores encrypted content without needing message plaintext.
+
+Inspect every relevant route, service, database query, event publisher, background worker, and DTO.
+
+Requirements:
+
+- PostgreSQL message content fields contain encrypted envelopes, not Base64-encoded plaintext.
+- Redis pub/sub, queues, cache entries, and transient event payloads do not carry plaintext message content.
+- WebSocket frames contain encrypted message content and only necessary routing metadata.
+- REST responses do not reconstruct plaintext messages from legacy fields.
+- Broadcast fan-out distributes encrypted recipient envelopes rather than plaintext.
+- Replies, reactions, edits, deletions, and media metadata do not leak their protected payloads.
+- Server-side logging, error handling, telemetry, tracing, and crash reporting redact sensitive payloads and tokens.
+- Do not log identity assertions, JWTs, session keys, private keys, or decrypted content.
+- Maintain server-side authorization for conversation membership, device registration, attachments, blocks, and recipient delivery.
+- Treat all client-supplied identifiers, membership claims, and encrypted envelopes as untrusted.
+- Prevent replay, duplicate delivery, unauthorized routing, cross-account access, and device impersonation to the extent supported by the existing protocol and server architecture.
+
+Preserve the necessary distinction between content confidentiality and server-visible metadata. The server may need account IDs, device IDs, conversation routing IDs, timestamps, delivery state, and group membership to operate. Minimize such metadata where practical, but do not claim that it is hidden if it remains visible.
+
+Inspect the existing `messages`, `broadcast_messages`, `broadcast_message_recipients`, `message_attachments`, `device_keys`, `one_time_prekeys`, and related tables before changing schemas.
+
+Do not store client private keys in `device_keys` or `one_time_prekeys`. Store only the public protocol material and server-side state the SDK architecture actually requires.
+
+If a legacy database column named `ciphertext` contains Base64-encoded plaintext, explicitly correct that representation. Never assume its name means it is encrypted.
+
+Keep existing migrations and deployment compatibility. Implement additive, backward-safe migrations where feasible. Do not reset databases or delete existing user data.
+
+## 9. Complete authenticated device identity and multi-device behavior
+
+Integrate protocol identities with Broadcast's existing OTP/JWT authentication and device registration.
+
+Requirements:
+
+- Use the existing hosted relay integration and authenticated identity assertion flow where implemented.
+- If any required integration is missing, implement it using the relay's actual documented interface.
+- Never use a development sandbox identity helper for production authentication.
+- Verify assertion issuer, audience, subject, expiry, signing key, rotation, revocation, and replay behavior according to the relay's documented contract.
+- Do not expose signing secrets in the mobile app or public Expo environment variables.
+- Do not trust a client merely because it supplies a user ID or device ID.
+- Scope protocol identity and persisted sessions correctly to the authenticated account and device.
+- Handle logout, account switching, app reinstall, identity replacement, and revoked devices safely.
+- Ensure one account cannot reuse another account's protocol state.
+- Ensure messages sent to multiple recipient devices are encrypted according to the protocol for each required device.
+- Handle new devices and key changes without silently treating changed identities as unchanged.
+- Implement explicit identity-change handling and user-facing verification where supported.
+- Ensure cryptographic failures never trigger a plaintext fallback.
+
+Implement an identity verification or safety-number-style UX using supported SDK capabilities if available. Do not invent a verification scheme or imply that OTP authentication proves the recipient's cryptographic identity.
+
+Preserve the existing decision not to implement history backup at this stage. Explain clearly in the UI that encrypted history may not be recoverable after reinstall or identity loss if that is the actual behavior. Do not add cloud plaintext backups or export private keys.
+
+## 10. Secure local message storage and offline behavior
+
+The current app uses a separate SDK-owned SQLCipher protocol database and an application database, `broadcast.db`. Inspect the actual persistence implementation.
+
+A separate encrypted protocol database does not automatically encrypt the application message cache.
+
+Requirements:
+
+- Avoid persisting decrypted message bodies, quoted text, sensitive previews, or attachment decryption keys in plaintext SQLite tables.
+- Extend SQLCipher or another appropriately reviewed encrypted-at-rest design to the application message cache, without merging it into the SDK-owned protocol database.
+- Preserve the SDK's ownership of its protocol database.
+- Implement a safe migration for existing local message data, with explicit handling of failure and rollback.
+- Never wipe existing data indiscriminately to simplify migration.
+- Minimize plaintext lifetime in memory and clear sensitive in-memory state on logout or account switch.
+- Ensure local search indexes and cached shared-content data do not leak plaintext into unencrypted storage.
+- Preserve offline message queues, retries, and synchronization using encrypted envelopes.
+- Ensure a message queued offline remains encrypted before it enters persistent storage or a network queue.
+- Keep decrypted content available to the authorized UI when needed without exposing it to unrelated accounts or background tasks.
+
+Do not introduce a local plaintext queue that later sends data for encryption on the server.
+
+## 11. Push notifications and background processing
+
+Keep push notification content generic.
+
+Requirements:
+
+- Never include message text, quoted text, reactions, media captions, filenames containing sensitive content, or decrypted previews in push payloads.
+- Use generic notification text such as "New message".
+- Include only the minimal identifiers needed to open the correct conversation.
+- On notification tap, navigate to the conversation and decrypt locally after authentication and key availability.
+- Preserve mute settings, delivery behavior, badge counts, and existing deep links.
+- Ensure notification logs and background jobs do not reveal plaintext.
+- Ensure background retries and notification processing operate on encrypted envelopes.
+
+Review foreground, background, terminated-app, and reconnect behavior. Do not weaken encryption to support a background execution path.
+
+## 12. Search, starred messages, shared content, and conversation actions
+
+Preserve the existing product behavior while keeping sensitive content encrypted at rest and private from the server.
+
+### Search
+
+- Perform content search locally over authorized, decrypted data.
+- Never upload search terms or plaintext content to the server.
+- Ensure local indexes are encrypted at rest or rebuildable from securely stored data.
+- Search messages, links, documents, and media captions according to existing product behavior.
+- Preserve filtering and pagination behavior.
+
+### Starred messages
+
+- Keep starred-message relationships scoped to the correct user and conversation.
+- Avoid sending plaintext message bodies as part of starred-message records.
+- Resolve starred content locally from the encrypted local store.
+- Preserve synchronization semantics for starred/unstarred state without leaking content.
+
+### Shared media, links, and documents
+
+- Derive link and media listings locally from decrypted messages where possible.
+- Do not send plaintext message bodies to a server-side indexing process.
+- Ensure document titles, filenames, captions, previews, and extracted links are protected according to the existing feature requirements.
+- Preserve existing filters, ordering, and navigation.
+
+### Clear chat
+
+- Clearing a chat for one user must not delete messages for other users.
+- Keep server-visible state to the minimum required to implement the feature.
+- Ensure local encrypted message content and relevant indexes are removed or made inaccessible according to the existing clear-chat semantics.
+- Do not confuse clearing local visibility with global message deletion or cryptographic revocation.
+- Preserve correct behavior across app restarts and synchronization.
+
+### Pinning, deleting, and other message actions
+
+Preserve the existing product's authorization and scope. Ensure message actions cannot be forged by another user and that protected content is not copied into plaintext API payloads.
+
+Do not add features that the app does not currently support.
+
+## 13. Identity changes, device revocation, and key lifecycle
+
+Implement the key lifecycle required for safe operation:
+
+- Initial identity and device provisioning.
+- Public key and prekey publication according to the SDK.
+- Key refresh and replenishment.
+- Session establishment and recovery.
+- Recipient device additions and removals.
+- Identity changes and device revocation.
+- Group membership changes and sender-key rotation.
+- Offline recipients and delayed messages.
+- Failed encryption, decryption, or state persistence.
+- Account logout and switching.
+- Reinstall and identity-loss handling.
+
+Use SDK APIs and protocol guarantees. Do not manually reset ratchets or delete protocol state as an arbitrary recovery mechanism.
+
+Where the app cannot safely continue because identity or key state is invalid, block sending and explain the problem without falling back to plaintext.
+
+Document which devices can decrypt a message at the time it is sent, how newly linked devices behave, and what happens to previously sent messages after device revocation.
+
+## 14. Legacy data and rollout safety
+
+Existing test/staging data may contain messages created before E2EE. Existing production data must not be destructively reset.
+
+Implement an explicit compatibility policy for legacy plaintext messages:
+
+- Identify legacy records and distinguish them from genuinely encrypted envelopes.
+- Never treat Base64 encoding as encryption.
+- Never send new messages through the legacy plaintext path.
+- Never convert legacy plaintext to a fake ciphertext representation.
+- Do not attempt to encrypt historical content on the server, since the server must not have access to client encryption keys.
+- If legacy messages can only be read in the old format, handle them explicitly and safely without permitting plaintext transmission for new messages.
+- Ensure older application versions cannot silently continue sending plaintext after the secure protocol becomes mandatory.
+- Introduce appropriate minimum-client/protocol-version enforcement or a safe upgrade requirement where necessary.
+- Use additive migrations and staged deployment controls where possible.
+- Do not delete databases, Docker volumes, user data, or production records to simplify rollout.
+
+Clearly document the transition behavior for existing conversations and older clients.
+
+## 15. Error handling and fail-closed behavior
+
+Handle the following explicitly:
+
+- Missing recipient identity or public key.
+- Unavailable or expired prekeys.
+- Relay outage.
+- Unsupported protocol version.
+- Decryption or authentication failure.
+- Corrupted ciphertext.
+- Duplicate and replayed events.
+- Group membership or sender-key mismatch.
+- Device revocation.
+- SQLCipher or secure-storage failure.
+- Interrupted attachment encryption or upload.
+- Missing media decryption keys.
+- Identity changes.
+- Partial broadcast delivery.
+- Failed local database migration.
+- Offline retries and stale queued envelopes.
+
+Provide useful user-facing errors and safe retry behavior without exposing cryptographic secrets.
+
+Never silently display encrypted bytes as readable text, drop into plaintext, or mark a failed encryption operation as successfully sent.
+
+## 16. Test coverage and security regressions
+
+Implement automated tests for the new functionality. Do not merely describe tests or report that they should be added.
+
+Include, as appropriate:
+
+### Direct messages
+
+- Encrypted send/receive between distinct identities and devices.
+- Reply/quote confidentiality.
+- Reactions and supported message operations.
+- Offline retry and duplicate delivery.
+- Invalid ciphertext rejection.
+- Identity changes and account isolation.
+
+### Groups
+
+- Multiple authorized members and devices.
+- Member addition and removal.
+- Sender-key rotation after membership removal.
+- Removed member unable to decrypt subsequent messages.
+- Unauthorized member unable to decrypt.
+- Offline members, reconnects, and partial failures.
+- Group state recovery without plaintext fallback.
+
+### Broadcast lists
+
+- Independent recipient encryption.
+- Multiple recipient devices.
+- Recipient isolation.
+- No recipient roster or list metadata leakage in message payloads.
+- Partial delivery and retries.
+- Removed recipient handling.
+
+### Media
+
+- Encryption before S3 upload.
+- Decryption on authorized recipients.
+- Integrity/tampering failure.
+- Expired URLs and interrupted transfers.
+- No plaintext thumbnails or derived media uploaded by the server.
+
+### Server blindness
+
+Use recognizable synthetic sentinel content and verify it does not appear in server-side message payloads, PostgreSQL content columns, Redis events, WebSocket payloads, logs, or push payloads. Check all relevant code paths, not just one endpoint.
+
+Distinguish permitted routing metadata from message content.
+
+### Local storage
+
+- No plaintext message bodies in unencrypted SQLite tables.
+- Secure migration behavior.
+- Account isolation.
+- Logout and account-switch cleanup.
+- Search and starred/shared-content behavior.
+- Offline queue encryption.
+
+Use the existing test framework and conventions. Add integration tests with separate test identities and a test database where appropriate. Do not weaken tests or remove unrelated assertions to get a green suite.
+
+## 17. Implementation strategy
+
+Execute the work in dependency order, but continue through all in-scope areas rather than stopping after the first milestone:
+
+1. Map existing encrypted and plaintext paths and define the shared message-encryption boundary.
+2. Finish backend and transport enforcement so new plaintext messages cannot be sent.
+3. Complete groups and membership-change key lifecycle.
+4. Complete per-recipient broadcast encryption.
+5. Complete encrypted message operations, replies, reactions, and other existing content paths.
+6. Complete media encryption and every media derivative.
+7. Secure local persistence, search, shared content, starred messages, and clear chat.
+8. Complete device identity, revocation, notifications, and offline behavior.
+9. Add migrations, rollout controls, automated tests, and security documentation.
+10. Fix regressions introduced by these changes and run the relevant test suites.
+
+If a dependency genuinely blocks a later feature, implement all independent work that can proceed, document the concrete blocker, and continue with the remaining areas. Do not stop merely because one integration test or environment-dependent check fails.
+
+Keep commits/changes logically separated if the current workflow supports them. Avoid broad unrelated refactors.
+
+## 18. Final deliverables and truthful status
+
+Implement code, migrations, UI changes, tests, and documentation as required.
+
+Update the security documentation to explain:
+- What is encrypted end to end.
+- Which metadata remains visible to the server.
+- The protocol and SDK version.
+- Group and broadcast key-management behavior.
+- Local encryption-at-rest behavior.
+- Device identity and verification.
+- Legacy-message compatibility.
+- Push notification privacy.
+- History backup limitations.
+- Known security limitations and unsupported features.
+
+At completion, provide a concise but detailed implementation report containing:
+
+1. Completed features and affected file paths.
+2. Database migrations and rollout requirements.
+3. Test commands and actual results.
+4. Features that are fully E2EE.
+5. Features that remain partially implemented or not implemented, with specific reasons.
+6. Any known plaintext path that remains and how it is blocked or isolated.
+7. Any deployment configuration or environment variables required.
+8. Any remaining security limitation that prevents an accurate claim of complete E2EE.
+
+Do not declare the product fully E2EE solely because the SDK is installed, tests pass, or 1:1 messages work.
+
+Do not ask me to reconfirm the previous milestone. Begin implementation immediately, preserve the working 1:1 and media flow, and complete as much of the defined scope as the repository and available integrations support.

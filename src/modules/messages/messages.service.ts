@@ -195,6 +195,15 @@ export class MessagesService {
         clientMessageId: body.clientMessageId,
         type: body.type,
         ciphertext: Buffer.from(body.ciphertext, "base64"),
+        encryptedMetadata: body.relayMessageId
+          ? Buffer.from(
+              JSON.stringify({
+                protocol: body.protocol,
+                relayMessageId: body.relayMessageId,
+              }),
+              "utf8",
+            )
+          : null,
         replyToMessageId: body.replyToMessageId ?? null,
         mentions,
         attachment: body.attachment ?? null,

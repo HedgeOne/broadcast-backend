@@ -74,9 +74,12 @@ export class MediaService {
       1,
       Math.floor((upload.uploadExpiresAt.getTime() - Date.now()) / 1000),
     );
+    // Encrypted attachments are opaque ciphertext on the wire; logical mimeType
+    // stays on the upload row for recipients after local decrypt.
+    const contentType = upload.contentEncrypted ? "application/octet-stream" : upload.mimeType;
     const presigned = await this.storage.presignUpload({
       key: upload.storageKey,
-      contentType: upload.mimeType,
+      contentType,
       contentLength: upload.declaredSize,
       expiresInSeconds,
     });
@@ -118,7 +121,14 @@ export class MediaService {
     const maxBytes = maxBytesFor(purpose, this.deps.settings.maxFileBytes);
     if (body.fileSize > maxBytes) throw mediaErrors.tooLarge(maxBytes);
 
-    const normalized = { ...body, purpose, fileName, mimeType: declared.mimeType };
+    const contentEncrypted = body.contentEncrypted === true;
+    const normalized = {
+      ...body,
+      purpose,
+      fileName,
+      mimeType: declared.mimeType,
+      contentEncrypted,
+    };
     const existing = await this.deps.repo.findByClientId(ownerId, body.clientUploadId);
     if (existing) return this.resume(existing, normalized);
 
@@ -137,6 +147,7 @@ export class MediaService {
       width: body.width ?? null,
       height: body.height ?? null,
       durationMs: body.durationMs ?? null,
+      contentEncrypted,
       uploadExpiresAt: new Date(Date.now() + this.deps.settings.uploadUrlTtlSeconds * 1000),
     });
     if (!inserted) {
@@ -149,14 +160,20 @@ export class MediaService {
 
   private async resume(
     upload: MediaUpload,
-    body: CreateUploadBody & { purpose: MediaPurpose; fileName: string | null; mimeType: string },
+    body: CreateUploadBody & {
+      purpose: MediaPurpose;
+      fileName: string | null;
+      mimeType: string;
+      contentEncrypted: boolean;
+    },
   ): Promise<{ upload: UploadDto; target: UploadTarget | null; created: boolean }> {
     const same =
       upload.purpose === body.purpose &&
       upload.category === body.category &&
       upload.mimeType === body.mimeType &&
       upload.declaredSize === body.fileSize &&
-      upload.fileName === body.fileName;
+      upload.fileName === body.fileName &&
+      upload.contentEncrypted === body.contentEncrypted;
     if (!same || upload.status === "failed" || upload.status === "deleted") {
       throw mediaErrors.clientUploadConflict();
     }
@@ -205,6 +222,14 @@ export class MediaService {
       return "TOO_LARGE";
     }
     if (head.size !== upload.declaredSize) return "SIZE_MISMATCH";
+    if (upload.contentEncrypted) {
+      // Ciphertext is opaque; only size and object presence are verified.
+      const expected = "application/octet-stream";
+      if (!head.contentType || normalizeMimeType(head.contentType) !== expected) {
+        return "TYPE_MISMATCH";
+      }
+      return null;
+    }
     if (!head.contentType || normalizeMimeType(head.contentType) !== upload.mimeType) {
       return "TYPE_MISMATCH";
     }
@@ -268,9 +293,12 @@ export class MediaService {
         fileName: null,
       });
     }
+    const contentType = attachment.encryptionMetadata
+      ? "application/octet-stream"
+      : attachment.mimeType;
     return this.download(storage, {
       key: attachment.storageKey,
-      contentType: attachment.mimeType,
+      contentType,
       fileName: attachment.fileName,
     });
   }

@@ -176,6 +176,7 @@ describe("groups", () => {
       clientMessageId: randomUUID(),
       type: "text",
       ciphertext: encodeText(text),
+      protocol: "opene2ee-v1",
       ...extra,
     });
   }
@@ -833,6 +834,7 @@ describe("groups", () => {
         clientMessageId: randomUUID(),
         type: "system",
         ciphertext: encodeText("fake event"),
+        protocol: "opene2ee-v1",
       });
       expect(response.statusCode).toBe(400);
     });
@@ -866,6 +868,7 @@ describe("groups", () => {
         senderId: ana.user.id,
         type: "text",
         ciphertext: encodeText("original"),
+        protocol: "opene2ee-v1",
       });
 
       await api(ctx, ana, "POST", `/groups/${chatId}/members`, { userIds: [cara.user.id] });

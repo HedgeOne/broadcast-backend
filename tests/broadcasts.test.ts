@@ -130,6 +130,7 @@ describe("broadcast lists", () => {
       clientMessageId,
       type: "text",
       ciphertext: encodeText(text),
+      protocol: "opene2ee-v1",
     });
   }
 
@@ -234,6 +235,7 @@ describe("broadcast lists", () => {
         clientMessageId: randomUUID(),
         type: "text",
         ciphertext: encodeText("hi"),
+        protocol: "opene2ee-v1",
         senderId: ana.user.id,
       });
       expect(spoofed.statusCode).toBe(400);
@@ -894,6 +896,7 @@ describe("broadcast lists", () => {
             clientMessageId: randomUUID(),
             type: "text",
             ciphertext: encodeText("durable"),
+            protocol: "opene2ee-v1",
           },
         });
         expect(response.statusCode, response.body).toBe(201);
