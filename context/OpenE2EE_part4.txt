@@ -1,0 +1,280 @@
+# Broadcast E2EE — Complete High-Priority Security Gaps
+
+## Objective
+
+Continue implementation of the E2EE scope defined in `OpenE2EE_Part2.txt`, titled:
+
+"Broadcast — Complete End-to-End Encryption Across the Entire Messaging Product"
+
+Repositories:
+- Frontend: `~/Desktop/broadcast`
+- Backend: `~/Desktop/broadcast/broadcast-backend`
+
+The current native implementation of 1:1 messaging with media has been tested successfully on two iOS simulators. Preserve that working implementation.
+
+The latest implementation pass reports:
+- Streaming AEAD media encryption before S3 upload.
+- Ciphertext-only uploads using `content_encrypted`.
+- Backend migration `014_e2ee_media.sql`.
+- Group membership-change hooks calling `handleGroupMembershipChange`.
+- Local `broadcast.db` sealing of `messages.text` and `messages.extra` using a SecureStore key, with local search decryption.
+- UI fixes preventing protocol pointers from being displayed as plaintext.
+- Updated `docs/E2EE.md`.
+
+Outstanding items:
+1. Production OpenE2EE custom-token identity assertion and console verifier integration.
+2. Native media and group-rotation tests.
+3. Reactions and deletion are REST-only and have not been completed as authenticated protocol events.
+4. Redis-dependent Vitest tests have not been run successfully because Redis was unavailable.
+5. The broader local-cache confidentiality audit and encrypted-upload enforcement still need implementation-level evidence.
+
+Do not repeat the original implementation from scratch. Inspect the current code, preserve correct changes, and implement these outstanding items.
+
+## Global rules
+
+- Do not stop after an audit, design document, or recommendations.
+- Make the necessary code, test, migration, and documentation changes.
+- Do not replace OpenE2EE or introduce custom cryptographic primitives.
+- No plaintext fallback under any circumstances.
+- Never treat Base64 encoding as encryption.
+- Never put private keys, media keys, assertion signing secrets, JWTs, or decrypted message content in logs.
+- Never destructively reset production data, local databases, Docker volumes, or existing protocol state.
+- Do not invent OpenE2EE SDK APIs, relay URLs, console settings, or token-verifier contracts.
+- Do not claim a feature is complete merely because its code compiles.
+- Keep existing product behavior and authorization rules unless a security correction requires a change.
+- Use separate test identities and a dedicated test database where needed.
+- Do not deploy, accept paid service terms, enable production traffic, or change production configuration automatically.
+
+## Priority 1 — Complete production identity assertion integration
+
+Inspect the current hosted-relay client setup, Broadcast OTP/JWT authentication, backend configuration, and the official OpenE2EE custom-token verifier documentation applicable to the installed SDK version.
+
+Implement the production integration using the documented contract.
+
+Requirements:
+
+1. Bind relay identity to the authenticated Broadcast account and device using the existing authentication system.
+2. Verify the actual relay's expected token/assertion format, signing requirements, issuer, audience, subject, expiration, and any required nonce, replay protection, rotation, or revocation semantics.
+3. Use only supported OpenE2EE APIs and the actual console verifier contract.
+4. Keep all server-only signing material and verification secrets out of the React Native app, `EXPO_PUBLIC_*` variables, Git, client bundles, and logs.
+5. Do not trust a user ID or device ID supplied by the client without validating it against the authenticated session.
+6. Ensure an expired, forged, wrong-audience, revoked, or otherwise invalid assertion is rejected.
+7. Ensure the identity assertion cannot be reused to impersonate another user or device.
+8. Handle signing-key rotation and configuration changes according to the actual provider contract.
+9. Ensure logout, account switching, and device revocation do not permit the previous identity to be reused improperly.
+10. Add unit and integration tests using synthetic credentials and test-only signing keys.
+
+Do not use `hostedRelaySandboxIdentity` or another development helper for production authentication.
+
+### External configuration
+
+If a relay project, relay URL, console verifier, or required credential is not available:
+
+- Implement all code that can be implemented safely from the documented contract.
+- Add strict environment validation and safe startup errors.
+- Add configuration examples containing placeholder values only.
+- Document the exact human actions required in the OpenE2EE console.
+- List each required environment variable, its purpose, where it belongs, and whether it is public or server-only.
+- Never print or request actual secrets in source files or logs.
+- Do not report production identity integration as fully operational until it has been exercised against the actual configured verifier.
+
+Continue with the other priorities even if this external dependency remains blocked.
+
+## Priority 2 — Make media encryption enforceable end to end
+
+Inspect the existing streaming AEAD implementation, media upload/download routes, presigned S3 URLs, `message_attachments`, migration `014_e2ee_media.sql`, and all callers for direct messages and broadcast lists.
+
+Implement and test:
+
+1. Attachment bytes are encrypted on the sending device before any upload begins.
+2. S3 receives ciphertext only.
+3. Media keys and decryption parameters exist only inside the appropriate encrypted message envelope and authorized device state.
+4. The backend cannot accept a client-declared `content_encrypted: true` flag as proof that uploaded bytes are ciphertext.
+5. Validate the encrypted-upload contract using authenticated, server-enforced upload metadata and the actual supported client protocol. Do not attempt to infer cryptographic validity from MIME type or filename.
+6. Legacy unencrypted attachment paths cannot be used to bypass E2EE for new messages.
+7. Presigned URLs remain private, short-lived, and appropriately authorized.
+8. Filenames, thumbnails, captions, generated previews, and other derived media do not leak plaintext through server processing, object metadata, logs, or push payloads.
+9. Tampered, corrupted, truncated, or incorrectly keyed media fails integrity validation and is not presented as a valid decrypted file.
+10. Interrupted transfers, expired URLs, retries, and large-file handling work without persisting plaintext into an unsafe queue or temporary file.
+
+Apply migration `014_e2ee_media.sql` only to the intended local development/test database when the environment has been positively identified as non-production. Inspect the migration and migration runner first. Never reset a database to apply it.
+
+Add regression tests for all applicable upload and download routes, including attempts to bypass the encrypted-upload requirement.
+
+## Priority 3 — Prove group membership rotation and forward access restrictions
+
+Inspect every group lifecycle path, including group creation, member addition, invitation acceptance, approval, member removal, leaving, role changes, and group deletion.
+
+The latest implementation reportedly calls `handleGroupMembershipChange`. Verify that this call uses the SDK correctly and that required protocol state is distributed and persisted.
+
+Implement or fix:
+
+1. Rotation and state distribution for every membership transition required by the SDK.
+2. Correct ordering between membership authorization changes, key rotation, state persistence, and subsequent message delivery.
+3. Retry-safe handling of partial failure and concurrent membership changes.
+4. Prevention of removed members receiving or decrypting messages sent after their removal.
+5. Prevention of new members accessing earlier messages unless an explicitly supported and authorized history-sharing feature exists.
+6. Correct operation when an authorized member is offline or has multiple devices.
+7. Correct failure behavior when rotation, distribution, or persistence fails.
+8. Prevention of further sends using stale group cryptographic state when rotation is required but incomplete.
+
+Do not assume a successful return from a membership-change handler proves the group was securely rotated. Use supported SDK state and operations to verify the resulting behavior.
+
+### Required group tests
+
+Use separate identities and native simulator devices where necessary:
+
+- Create a group and exchange encrypted messages among authorized members.
+- Add a member and verify the intended access boundary.
+- Remove a member and send a new message.
+- Verify the remaining authorized members can decrypt the new message.
+- Verify the removed member cannot decrypt the new message and cannot receive its valid envelope.
+- Verify historical-message behavior matches the documented protocol guarantees.
+- Repeat with an offline member, multiple recipient devices, retries, and a failed rotation/distribution attempt.
+- Confirm no group message body or key material is exposed to PostgreSQL, Redis, WebSocket payloads, or logs.
+
+Do not claim forward secrecy or post-removal confidentiality beyond what the SDK's documented guarantees and tests establish.
+
+## Priority 4 — Complete authenticated reaction and deletion operations
+
+Inspect the current reaction and deletion implementations, REST endpoints, database schema, authorization checks, WebSocket events, and local message state.
+
+Implement protocol-authenticated operations that preserve the product's existing semantics.
+
+Requirements:
+
+1. Authenticate the actor and validate that the actor is authorized to perform the operation on the specific message and conversation.
+2. Bind each operation to the correct conversation, message identifier, actor, operation type, and relevant state/version using supported protocol mechanisms.
+3. Prevent clients from forging reactions, deletions, or operation events for another user.
+4. Prevent unauthorized edits or deletions from being accepted by changing a REST request body or WebSocket payload.
+5. Keep operation payloads encrypted where they contain protected content or message-specific sensitive information.
+6. If an operation is represented by minimal server-visible metadata, explicitly document the metadata and cryptographic authorization model. Do not claim that a REST-only event is E2EE-authenticated unless it is actually authenticated by the protocol.
+7. Preserve the distinction between deleting a message for oneself, deleting it for everyone if supported, and clearing local chat history.
+8. Make retries and duplicate events idempotent.
+9. Synchronize the resulting state correctly across authorized devices.
+10. Fail closed on missing keys, invalid authentication, stale state, unsupported operations, or decryption/authentication errors.
+
+Do not create an edit-message feature if no edit API exists. Do not delete the other participant's local history when a user clears their own chat.
+
+Add negative tests for forged actor IDs, unauthorized message IDs, cross-conversation operations, duplicate operations, stale events, invalid authentication, and unauthorized deletion.
+
+## Priority 5 — Audit and fix local cache confidentiality
+
+Inspect every table, column, index, query, migration, and persistence path in `broadcast.db`, not just `messages.text` and `messages.extra`.
+
+Find all plaintext-bearing or content-derived data, including:
+- Message text and quoted bodies.
+- Captions and filenames.
+- Link previews and extracted URLs.
+- Shared-media/document metadata.
+- Starred-message data.
+- Search-related state.
+- Pending/outgoing message queues.
+- Decrypted temporary files and derived previews.
+- Any denormalized chat or broadcast preview.
+- Other cached content or protocol pointers that the UI might mistake for plaintext.
+
+Implement an appropriate, maintainable at-rest encryption design.
+
+Requirements:
+
+1. Use authenticated encryption and a properly protected key stored through the existing secure-storage design or an appropriately reviewed SQLCipher design.
+2. Keep the SDK-owned protocol database separate from the application database.
+3. Correctly scope data and keys to the authenticated account/device.
+4. Prevent account switching from exposing another account's cached plaintext or encryption keys.
+5. Ensure logout clears sensitive in-memory state.
+6. Ensure search decrypts only locally and does not leak plaintext to the server.
+7. Check SQLite journal/WAL files, temporary files, exports, backups, and migration artifacts for plaintext persistence.
+8. Migrate existing local records safely without deleting data indiscriminately.
+9. Handle key loss, corruption, and migration failure explicitly.
+10. Ensure encrypted local content is not accidentally decrypted by generic DTO mappers or preview components.
+
+Do not assume that sealing two columns encrypts the entire SQLite database. Choose the narrowest secure implementation consistent with the current architecture and preserve existing behavior.
+
+Add tests for local persistence, restart, account switching, logout, search, starred messages, shared content, and migration failure. Include a test that proves a recognizable synthetic sentinel message is absent from the relevant unencrypted database content and indexes.
+
+## Priority 6 — Run Redis-dependent tests and fix real regressions
+
+Inspect the existing Docker Compose configuration and Vitest setup.
+
+- Start Redis using the repository's existing local development configuration.
+- Confirm the test environment points to the intended local Redis instance.
+- Run the previously blocked Redis-dependent messaging tests.
+- Run focused E2EE tests and the relevant backend integration tests.
+- Fix failures introduced by this implementation.
+- Do not remove assertions or loosen security checks to make tests pass.
+- Do not run destructive reset scripts or tests against production resources.
+- If a test requires a separate test database, verify its connection string and environment before running it.
+- Report unrelated baseline failures separately and include the exact command and error.
+
+Do not claim these tests passed unless they actually ran successfully.
+
+## Cross-cutting requirements
+
+### Server blindness
+
+Use recognizable synthetic sentinel content to verify that message plaintext and media keys do not appear in:
+- PostgreSQL message content fields.
+- Redis pub/sub and queues.
+- WebSocket frames.
+- REST request/response payloads on the server side.
+- Server logs and error telemetry.
+- Push notification payloads.
+- S3 object bytes and metadata.
+
+Check the relevant real paths, not just mocked helper functions. Clearly distinguish necessary routing metadata from message content.
+
+### Compatibility and data safety
+
+- Use additive, backward-safe migrations where possible.
+- Preserve existing user and conversation data.
+- Do not encrypt historical content on the server by pretending it has client-side cryptographic protection.
+- Prevent old clients from silently using a plaintext send path where a secure protocol is mandatory.
+- Keep generic push notifications; never add plaintext previews.
+- Do not implement history backup as part of this task.
+- Update `docs/E2EE.md` with accurate guarantees and remaining limitations.
+
+### Testing standards
+
+Run the available:
+- Frontend and backend typechecks.
+- Lint checks.
+- Focused unit tests.
+- Redis-backed integration tests.
+- Database migration tests.
+- Native simulator tests where required and available.
+
+Use real SDK APIs and actual integration boundaries. Do not use mocks as the sole proof of encryption, media confidentiality, or group key rotation.
+
+## Execution order
+
+Implement in this order, but do not stop at the first external blocker:
+
+1. Production identity assertion code and exact configuration requirements.
+2. Media enforcement and upload/download regression tests.
+3. Group rotation correctness and membership-removal tests.
+4. Authenticated reaction and deletion operations.
+5. Complete local-cache confidentiality and migration.
+6. Run Redis-dependent tests and fix regressions.
+7. Update security documentation and provide a consolidated report.
+
+If external OpenE2EE console configuration prevents a real production integration test, complete all safe code-side work and continue the remaining tasks. Do not fabricate successful production verification.
+
+## Final report
+
+Report:
+
+1. Implemented changes with file paths.
+2. Migration status and the database/environment against which it was applied.
+3. Tests actually run, exact commands, and results.
+4. Group removal and media encryption evidence.
+5. Reaction/deletion authorization and protocol behavior.
+6. Local-cache encryption coverage and any remaining plaintext locations.
+7. Redis-backed test results.
+8. Required OpenE2EE console actions and missing configuration, if any.
+9. Any remaining security blockers.
+10. An honest per-area status: COMPLETE, PARTIAL, or BLOCKED.
+
+Do not report "fully E2EE" unless the implementation and evidence support that claim.
+
+Begin implementation immediately. Preserve the working direct-message and media implementation and continue through all high-priority tasks without asking for another milestone confirmation.

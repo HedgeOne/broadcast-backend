@@ -142,11 +142,15 @@ describe("direct messaging", () => {
         unreadCount: 1,
         lastMessage: {
           sequence: 1,
-          ciphertext: encodeText("hi"),
-          protocol: "opene2ee-v1",
           senderId: ana.user.id,
         },
       });
+      // Server stores an opaque protocol pointer, never UTF-8 plaintext.
+      const last = list[0]!.lastMessage!;
+      const pointer = JSON.parse(Buffer.from(last.ciphertext, "base64").toString("utf8")) as {
+        protocol?: string;
+      };
+      expect(pointer.protocol).toBe("opene2ee-v1");
     });
 
     it("does not reveal a chat to non-members", async () => {

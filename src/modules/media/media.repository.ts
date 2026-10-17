@@ -63,6 +63,10 @@ export async function claimMedia(
   if (!upload || upload.status !== "ready" || upload.category !== input.category) {
     throw mediaErrors.attachmentInvalid();
   }
+  // Legacy plaintext attachment uploads cannot be claimed for new messages.
+  if (!upload.contentEncrypted) {
+    throw mediaErrors.attachmentInvalid();
+  }
 
   let thumbnail: MediaUpload | null = null;
   if (input.thumbnailUploadId) {

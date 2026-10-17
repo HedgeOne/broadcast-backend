@@ -223,11 +223,16 @@ export class MediaService {
     }
     if (head.size !== upload.declaredSize) return "SIZE_MISMATCH";
     if (upload.contentEncrypted) {
-      // Ciphertext is opaque; only size and object presence are verified.
+      // Do not trust the client flag alone: require opaque content-type and
+      // Tink streaming-AEAD framing (header length byte 40). This is not a
+      // substitute for end-to-end key authentication in the message envelope.
       const expected = "application/octet-stream";
       if (!head.contentType || normalizeMimeType(head.contentType) !== expected) {
         return "TYPE_MISMATCH";
       }
+      if (head.size < 40 + 16) return "CONTENT_MISMATCH";
+      const start = await this.storage.readStart(upload.storageKey, 1);
+      if (start.length < 1 || start[0] !== 40) return "CONTENT_MISMATCH";
       return null;
     }
     if (!head.contentType || normalizeMimeType(head.contentType) !== upload.mimeType) {

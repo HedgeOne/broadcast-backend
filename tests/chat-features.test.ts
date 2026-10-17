@@ -132,12 +132,16 @@ describe("chat features", () => {
   }
 
   async function upload(user: TestUser, file: FileSpec): Promise<string> {
+    const header = Buffer.alloc(40, 0);
+    header[0] = 40;
+    const ciphertext = Buffer.concat([header, Buffer.alloc(file.body.length + 16, 7)]);
     const session = await api(ctx, user, "POST", "/media/uploads", {
       clientUploadId: randomUUID(),
       category: file.category,
       mimeType: file.mimeType,
       fileName: file.fileName,
-      fileSize: file.body.length,
+      fileSize: ciphertext.length,
+      contentEncrypted: true,
       ...(file.category === "image" ? { width: 1, height: 1 } : {}),
     });
     expect(session.statusCode, session.body).toBe(201);
@@ -145,7 +149,7 @@ describe("chat features", () => {
       upload: { id: string };
       target: { url: string; headers: Record<string, string> };
     }>();
-    expect(storage.put(target.url, file.body, target.headers["Content-Type"] ?? "")).toBe(200);
+    expect(storage.put(target.url, ciphertext, target.headers["Content-Type"] ?? "")).toBe(200);
     const done = await api(ctx, user, "POST", `/media/uploads/${created.id}/complete`);
     expect(done.statusCode, done.body).toBe(200);
     return created.id;
@@ -156,7 +160,8 @@ describe("chat features", () => {
     const response = await api(ctx, user, "POST", `/chats/${chatId}/messages`, {
       clientMessageId: randomUUID(),
       type: file.category,
-      ciphertext: "",
+      ciphertext: encodeText("caption"),
+      protocol: "opene2ee-v1",
       attachment: { uploadId },
     });
     expect(response.statusCode, response.body).toBe(201);
@@ -652,7 +657,8 @@ describe("chat features", () => {
       const sent = await api(ctx, ana, "POST", `/broadcasts/${listId}/messages`, {
         clientMessageId: randomUUID(),
         type: "document",
-        ciphertext: "",
+        ciphertext: encodeText(""),
+        protocol: "opene2ee-v1",
         attachment: { uploadId },
       });
       expect(sent.statusCode, sent.body).toBe(201);

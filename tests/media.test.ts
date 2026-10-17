@@ -18,7 +18,6 @@ import {
   encodeText,
   nextEvent,
   openChat,
-  sendText,
   type TestUser,
 } from "./helpers/messaging.js";
 
@@ -75,11 +74,19 @@ interface FileSpec {
   durationMs?: number;
 }
 
+/** Minimal Tink streaming-AEAD framed ciphertext (header length byte = 40). */
+function e2eeBody(minPlain = 32): Buffer {
+  const header = Buffer.alloc(40, 0);
+  header[0] = 40;
+  const segment = Buffer.alloc(Math.max(minPlain, 1) + 16, 7);
+  return Buffer.concat([header, segment]);
+}
+
 const PNG: FileSpec = {
   category: "image",
   mimeType: "image/png",
   fileName: "photo.png",
-  body: SAMPLES.png,
+  body: e2eeBody(SAMPLES.png.length),
   width: 1,
   height: 1,
 };
@@ -87,7 +94,7 @@ const PDF: FileSpec = {
   category: "document",
   mimeType: "application/pdf",
   fileName: "Quarterly report.pdf",
-  body: SAMPLES.pdf,
+  body: e2eeBody(SAMPLES.pdf.length),
 };
 
 describe("media", () => {
@@ -124,6 +131,7 @@ describe("media", () => {
       mimeType: file.mimeType,
       fileName: file.fileName,
       fileSize: file.body.length,
+      contentEncrypted: true,
       ...(file.width ? { width: file.width, height: file.height } : {}),
       ...(file.durationMs !== undefined ? { durationMs: file.durationMs } : {}),
       ...extra,
@@ -135,6 +143,7 @@ describe("media", () => {
     const session = await createSession(user, file);
     expect(session.statusCode, session.body).toBe(201);
     const { upload: created, target } = session.json<{ upload: UploadBody; target: TargetBody }>();
+    expect(target.headers["Content-Type"]).toBe("application/octet-stream");
     expect(storage.put(target.url, file.body, target.headers["Content-Type"] ?? "")).toBe(200);
     const done = await api(ctx, user, "POST", `/media/uploads/${created.id}/complete`);
     expect(done.statusCode, done.body).toBe(200);
@@ -209,11 +218,11 @@ describe("media", () => {
         category: "image",
         mimeType: "image/png",
         fileName: "photo.png",
-        fileSize: SAMPLES.png.length,
+        fileSize: PNG.body.length,
         status: "pending",
       });
       expect(body.target.method).toBe("PUT");
-      expect(body.target.headers).toEqual({ "Content-Type": "image/png" });
+      expect(body.target.headers).toEqual({ "Content-Type": "application/octet-stream" });
       expect(Date.parse(body.target.expiresAt)).toBeGreaterThan(Date.now());
       expect(response.headers["cache-control"]).toBe("no-store");
 
@@ -307,7 +316,7 @@ describe("media", () => {
       expect(early.statusCode).toBe(409);
       expect(early.json()).toMatchObject({ error: { code: "UPLOAD_INCOMPLETE" } });
 
-      expect(storage.put(target.url, PNG.body, "image/png")).toBe(200);
+      expect(storage.put(target.url, PNG.body, "application/octet-stream")).toBe(200);
       const done = await api(ctx, ana, "POST", `/media/uploads/${created.id}/complete`);
       expect(done.statusCode).toBe(200);
       expect(done.json<{ upload: UploadBody }>().upload).toMatchObject({
@@ -324,15 +333,14 @@ describe("media", () => {
       expect(retry.json<{ target: TargetBody | null }>().target).toBeNull();
     });
 
-    it("refuses content that doesn't match the declared type and deletes it", async () => {
-      // An executable renamed to .png, with the right size and type headers.
-      const fake = { ...PNG, body: SAMPLES.exe };
+    it("refuses ciphertext that is not streaming-AEAD framed and deletes it", async () => {
+      const fake = { ...PNG, body: Buffer.alloc(PNG.body.length, 0xff) };
       const session = await createSession(ana, fake);
       const { upload: created, target } = session.json<{
         upload: UploadBody;
         target: TargetBody;
       }>();
-      expect(storage.put(target.url, fake.body, "image/png")).toBe(200);
+      expect(storage.put(target.url, fake.body, "application/octet-stream")).toBe(200);
 
       const done = await api(ctx, ana, "POST", `/media/uploads/${created.id}/complete`);
       expect(done.statusCode).toBe(422);
@@ -351,7 +359,7 @@ describe("media", () => {
       const session = await createSession(ana, PNG);
       const { upload: created } = session.json<{ upload: UploadBody }>();
       const key = await storageKeyOf(created.id);
-      storage.plant(key, Buffer.concat([PNG.body, Buffer.alloc(10)]), "image/png");
+      storage.plant(key, Buffer.concat([PNG.body, Buffer.alloc(10)]), "application/octet-stream");
       const bigger = await api(ctx, ana, "POST", `/media/uploads/${created.id}/complete`);
       expect(bigger.json()).toMatchObject({ error: { details: { reason: "SIZE_MISMATCH" } } });
 
@@ -362,12 +370,29 @@ describe("media", () => {
       expect(retyped.json()).toMatchObject({ error: { details: { reason: "TYPE_MISMATCH" } } });
     });
 
+    it("rejects message attachment sessions that omit contentEncrypted", async () => {
+      const response = await api(ctx, ana, "POST", "/media/uploads", {
+        clientUploadId: randomUUID(),
+        category: "image",
+        mimeType: "image/png",
+        fileName: "photo.png",
+        fileSize: 64,
+        width: 1,
+        height: 1,
+      });
+      expect(response.statusCode).toBe(400);
+    });
+
     it("presigned PUTs only accept the signed size and type", async () => {
       const session = await createSession(ana, PNG);
       const { target } = session.json<{ target: TargetBody }>();
-      expect(storage.put(target.url, Buffer.concat([PNG.body, Buffer.alloc(1)]), "image/png")).toBe(
-        403,
-      );
+      expect(
+        storage.put(
+          target.url,
+          Buffer.concat([PNG.body, Buffer.alloc(1)]),
+          "application/octet-stream",
+        ),
+      ).toBe(403);
       expect(storage.put(target.url, PNG.body, "text/html")).toBe(403);
     });
 
@@ -442,19 +467,25 @@ describe("media", () => {
     it("allows an empty caption and requires an attachment for media types", async () => {
       const chatId = await openChat(ctx, ana, ben);
       const ready = await upload(ana);
-      const empty = await sendMedia(ana, chatId, ready.id, { ciphertext: "" });
+      const empty = await sendMedia(ana, chatId, ready.id, { ciphertext: encodeText("") });
       expect(empty.statusCode, empty.body).toBe(201);
 
       const missing = await api(ctx, ana, "POST", `/chats/${chatId}/messages`, {
         clientMessageId: randomUUID(),
         type: "image",
-        ciphertext: "",
+        ciphertext: encodeText(""),
+        protocol: "opene2ee-v1",
       });
       expect(missing.statusCode).toBe(400);
 
       const textWithFile = await sendMedia(ana, chatId, ready.id, { type: "text" });
       expect(textWithFile.statusCode).toBe(400);
-      const emptyText = await sendText(ctx, ana, chatId, "");
+      const emptyText = await api(ctx, ana, "POST", `/chats/${chatId}/messages`, {
+        clientMessageId: randomUUID(),
+        type: "text",
+        ciphertext: "",
+        protocol: "opene2ee-v1",
+      });
       expect(emptyText.statusCode).toBe(400);
     });
 
@@ -508,11 +539,13 @@ describe("media", () => {
 
     it("attaches a video thumbnail and serves it as its own variant", async () => {
       const chatId = await openChat(ctx, ana, ben);
+      const videoBody = e2eeBody(SAMPLES.mp4.length);
+      const posterBody = e2eeBody(SAMPLES.jpeg.length);
       const video = await upload(ana, {
         category: "video",
         mimeType: "video/mp4",
         fileName: "clip.mp4",
-        body: SAMPLES.mp4,
+        body: videoBody,
         width: 640,
         height: 360,
         durationMs: 4200,
@@ -521,7 +554,7 @@ describe("media", () => {
         ...PNG,
         mimeType: "image/jpeg",
         fileName: "poster.jpg",
-        body: SAMPLES.jpeg,
+        body: posterBody,
       });
       const response = await sendMedia(ana, chatId, video.id, {
         type: "video",
@@ -533,10 +566,10 @@ describe("media", () => {
 
       const thumb = await downloadUrl(ben, attachment?.id ?? "", "thumbnail");
       expect(thumb.statusCode).toBe(200);
-      expect(storage.get(thumb.json<{ url: string }>().url)).toEqual(SAMPLES.jpeg);
+      expect(storage.get(thumb.json<{ url: string }>().url)).toEqual(posterBody);
 
       const original = await downloadUrl(ben, attachment?.id ?? "");
-      expect(storage.get(original.json<{ url: string }>().url)).toEqual(SAMPLES.mp4);
+      expect(storage.get(original.json<{ url: string }>().url)).toEqual(videoBody);
     });
 
     it("refuses a thumbnail that isn't a small image of the sender's", async () => {
@@ -545,7 +578,7 @@ describe("media", () => {
         category: "video",
         mimeType: "video/mp4",
         fileName: "clip.mp4",
-        body: SAMPLES.mp4,
+        body: e2eeBody(SAMPLES.mp4.length),
       });
       const doc = await upload(ana, PDF);
       const response = await sendMedia(ana, chatId, video.id, {
@@ -642,7 +675,8 @@ describe("media", () => {
       const response = await api(ctx, ana, "POST", `/broadcasts/${listId}/messages`, {
         clientMessageId: randomUUID(),
         type: "document",
-        ciphertext: "",
+        ciphertext: encodeText(""),
+        protocol: "opene2ee-v1",
         attachment: { uploadId: ready.id },
       });
       expect(response.statusCode, response.body).toBe(201);
@@ -681,7 +715,8 @@ describe("media", () => {
       const response = await api(ctx, ana, "POST", `/broadcasts/${listId}/messages`, {
         clientMessageId: randomUUID(),
         type: "image",
-        ciphertext: "",
+        ciphertext: encodeText("x"),
+        protocol: "opene2ee-v1",
         attachment: { uploadId: bens.id },
       });
       expect(response.statusCode).toBe(422);
@@ -696,7 +731,7 @@ describe("media", () => {
         upload: UploadBody;
         target: TargetBody;
       }>();
-      storage.put(abandoned.target.url, PNG.body, "image/png");
+      storage.put(abandoned.target.url, PNG.body, "application/octet-stream");
       const unsent = await upload(ana);
       const fresh = await upload(ana);
 
@@ -730,12 +765,14 @@ describe("media", () => {
         return response.json<{ list: { id: string } }>().list.id;
       })();
       const ready = await upload(ana);
-      await api(ctx, ana, "POST", `/broadcasts/${listId}/messages`, {
+      const broadcasted = await api(ctx, ana, "POST", `/broadcasts/${listId}/messages`, {
         clientMessageId: randomUUID(),
         type: "image",
-        ciphertext: "",
+        ciphertext: encodeText(""),
+        protocol: "opene2ee-v1",
         attachment: { uploadId: ready.id },
       });
+      expect(broadcasted.statusCode, broadcasted.body).toBe(201);
       const sent = await pool.query<{ message_id: string; target_chat_id: string }>(
         "SELECT message_id, target_chat_id FROM broadcast_message_recipients ORDER BY recipient_id",
       );
@@ -831,7 +868,10 @@ describe("media limits", () => {
         category: "image",
         mimeType: "image/png",
         fileName: "a.png",
-        fileSize: 10,
+        fileSize: 64,
+        contentEncrypted: true,
+        width: 1,
+        height: 1,
       });
       statuses.push(response.statusCode);
     }
@@ -868,7 +908,10 @@ describe("media without a bucket", () => {
       category: "image",
       mimeType: "image/png",
       fileName: "a.png",
-      fileSize: 10,
+      fileSize: 64,
+      contentEncrypted: true,
+      width: 1,
+      height: 1,
     });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toMatchObject({ error: { code: "MEDIA_UNAVAILABLE" } });

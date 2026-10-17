@@ -26,11 +26,21 @@ export const createUploadBody = z
   })
   .strict()
   .superRefine((body, ctx) => {
-    if (body.contentEncrypted && (body.purpose ?? "attachment") !== "attachment") {
+    const purpose = body.purpose ?? "attachment";
+    if (body.contentEncrypted && purpose !== "attachment") {
       ctx.addIssue({
         code: "custom",
         path: ["contentEncrypted"],
         message: "Only message attachments may be content-encrypted.",
+      });
+    }
+    // New message attachments must declare client-side E2EE. The flag alone is
+    // not cryptographic proof — completeUpload verifies streaming-AEAD framing.
+    if (purpose === "attachment" && body.contentEncrypted !== true) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["contentEncrypted"],
+        message: "Message attachments must be encrypted before upload.",
       });
     }
   });
