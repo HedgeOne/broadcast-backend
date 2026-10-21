@@ -1,0 +1,23 @@
+Investigate the persistent OpenE2EE `KEY_STORAGE_ERROR` in the actual native iOS development build. Do not assume the app is running in Expo Go.
+
+Evidence:
+- `pnpm expo run:ios` completed successfully.
+- Xcode reported `Build Succeeded`.
+- Expo installed `Hollar.app` and opened bundle identifier `com.anonymous.broadcast` on the iPhone 18 Pro simulator.
+- Runtime logs repeatedly show `[e2ee] local protocol unavailable initialization-failed KEY_STORAGE_ERROR`.
+- The OpenE2EE SDK is version 11.0.0.
+- `app.json` enables `expo-sqlite` SQLCipher support.
+- The SDK's Expo storage adapter reportedly checks `PRAGMA cipher_version` and throws `SqliteEncryptionUnavailableError` when SQLCipher is unavailable.
+
+Tasks:
+
+1. Verify the installed app's actual native binary and bundle identifier on the running simulator.
+2. Inspect the compiled ExpoSQLite pod, build configuration, compiler definitions, and linked native libraries to establish whether SQLCipher was compiled into the installed binary. Do not rely on source configuration alone.
+3. Inspect the installed SDK's exact `expoSqliteHasCipher()` implementation and determine whether the probe can fail despite SQLCipher being present.
+4. Identify where `KEY_STORAGE_ERROR` is generated and add a temporary development-only diagnostic at that catch point to record the original exception's name, message, code, and safe stack frames. Never log keys, vault contents, tokens, or assertions.
+5. If necessary, add a temporary, isolated development diagnostic using the same `expo-sqlite` module to open an in-memory database and query `PRAGMA cipher_version`. Do not modify or open the E2EE database for this test.
+6. Check whether the native binary is stale relative to the current Pods and `useSQLCipher` configuration.
+7. Inspect whether the installed SDK version is compatible with the installed Expo SQLite version and native architecture.
+8. Do not change relay URLs or investigate production identity assertions until local storage initialization works.
+
+Return the exact evidence, the underlying exception if available, and the smallest safe remediation. Do not delete protocol storage, reset device identities, disable encryption, or rebuild until the diagnosis explains why a rebuild is necessary.
