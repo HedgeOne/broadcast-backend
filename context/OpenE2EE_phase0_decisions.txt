@@ -1,0 +1,64 @@
+# OpenE2EE Phase 0 — Locked architecture decisions
+
+Verified: 2026-10-22 against npm registry and docs.open-e2ee.dev.
+
+## SDK version
+
+- Pin: @open-e2ee/signal-protocol-sdk@13.0.0 (npm dist-tag latest)
+- Expo docs install pin matches 13.0.0
+- Peers: expo >=55, react-native >=0.83.6, expo-sqlite/secure-store; CI includes Expo 57 / RN 0.86
+- Companion: react-native-get-random-values (Expo-resolved ~1.11.0)
+- SQLCipher: expo-sqlite plugin useSQLCipher true; Expo Go unsupported
+- Official docs:
+  - https://docs.open-e2ee.dev/start/expo
+  - https://docs.open-e2ee.dev/start/quickstart
+  - https://docs.open-e2ee.dev/relay/identity
+  - https://docs.open-e2ee.dev/relay/custom-token
+  - https://docs.open-e2ee.dev/operate/production-checklist
+
+## Product decisions (final)
+
+1. Hosted OpenE2EE Relay for encrypted envelopes and protocol delivery.
+2. Hollar Fastify keeps OTP, JWT, membership, contacts, receipts, app metadata.
+3. No chat-history backup or key escrow (high-risk / Signal-like recovery profile).
+4. First product scope: one-to-one text only.
+5. Separate DBs: broadcast.db (app) vs open-e2ee-<userId>.db (SDK SQLCipher).
+6. Out of scope now: groups, broadcast lists, media E2EE, linked-device encryption.
+
+## Identity (production)
+
+- Hollar JWT session → POST /auth/relay-identity (to be built) signs ES256 assertion.
+- sub = Hollar users.id; iss/aud/kid configured in Relay Console; private JWK only on backend.
+- Sandbox uses hostedRelaySandboxIdentity until Production custom-token is live.
+- Do not send Hollar access tokens to the Relay.
+
+## Transport
+
+- Message bodies: Relay only (signal.send + subscription). Never also as ciphertext on Hollar WS/REST body path.
+- Hollar retains chat create/membership, receipts, reactions, push wake metadata.
+- IDs: shared clientMessageId for idempotency; Relay messageId for protocol; Hollar sequence for receipts when metadata rows exist.
+
+## Key lifecycle
+
+- Persist SQLCipher store + SecureStore vault during normal use.
+- Clear conversation: does not delete protocol keys.
+- Logout: stop Relay client and close store handle; keep on-disk protocol DB for same Hollar user on this install.
+- Reinstall / lost device: new crypto identity; history not restored; peers see identity change.
+- Do not promise clear-chat erases all Relay-retained envelopes.
+
+## Implementation sequence
+
+1. Native foundation (done on opene2ee): SDK install, SQLCipher plugin, random entry polyfill, e2ee client module, session start/stop.
+2. Sandbox PoC: pnpm e2ee:sandbox-poc (Node in-memory) then native rebuild + device proof.
+3. Production assertion issuer on Fastify + Console verifier.
+4. Feature-flagged 1:1 text over Relay; Hollar for chat/receipts only.
+5. Identity-change UX and prekey replenishment on foreground.
+
+## Native rebuild required
+
+After enabling useSQLCipher, rebuild the development client:
+
+  cd broadcast && npx expo run:ios
+  cd broadcast && npx expo run:android
+
+Expo Go cannot open the protocol store.

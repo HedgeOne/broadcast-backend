@@ -1,0 +1,54 @@
+# Phase 0.5 — Two-Client Native OpenE2EE Sandbox Test
+
+The iOS development build now logs:
+- Signal Protocol initialization and prekey synchronization.
+- `store.atRest file-cipher` and `file-cipher = true`.
+- Relay state transitions including `connecting`, `connected`, `reconnecting`, and `connected` again.
+
+Normal Broadcast messaging continues to work. The production chat pipeline still uses legacy `encodeText`; it must remain unchanged during this task.
+
+## Objective
+
+Create a minimal development-only test proving that two independent native app protocol clients can exchange and decrypt a message through the hosted OpenE2EE Sandbox Relay using the actual SDK and native persistent stores.
+
+## Before implementing
+
+1. Inspect the installed `@open-e2ee/signal-protocol-sdk@13.0.0` API and the existing Sandbox PoC.
+2. Identify the smallest supported way to instantiate two independent clients with distinct identities, distinct stores, and separate Relay subscriptions.
+3. Confirm how the SDK distinguishes sender and recipient identities and how the receiver registers for inbound decrypted messages.
+4. Determine whether two clients can safely coexist inside one app process. If not, use two simulator/device installations instead.
+5. Do not invent SDK methods. Use installed type declarations and existing working examples.
+
+## Test requirements
+
+- Use Sandbox credentials/configuration only.
+- Use two independent protocol identities and separate stores. Never share a store between sender and receiver.
+- Establish both Relay subscriptions before sending.
+- Send a fixed harmless test payload through the SDK's supported encrypted Relay path.
+- Verify that the receiving client receives the expected plaintext only after SDK decryption.
+- Verify that the sender and receiver identities are distinct.
+- Include a timeout and useful failure diagnostics so the test cannot hang indefinitely.
+- Log only test status, non-secret identity labels, and sanitized errors. Never log keys, tokens, or production message contents.
+- Ensure clients, subscriptions, and stores are cleaned up correctly after the test.
+- Keep this test isolated from normal chats.
+
+## Strict constraints
+
+Do not:
+- Modify `messages-store`, the chat composer, normal send/receive APIs, database schemas, or migrations.
+- Introduce production identity assertions.
+- Route any production message body through both the Relay and Hollar backend.
+- Reset or delete existing user cryptographic state.
+- Claim success if the receiver only gets an event without verifying the decrypted payload.
+
+## Deliverables
+
+Report:
+1. Files changed and the exact test command.
+2. Whether the test uses two independent native stores and two distinct identities.
+3. Whether the actual Sandbox Relay was used.
+4. Whether the receiver successfully decrypted and validated the expected payload.
+5. Typecheck and test results.
+6. Any remaining blockers before product integration.
+
+If a native two-client test cannot safely run in one process, explain why and provide the smallest practical two-simulator test plan instead.

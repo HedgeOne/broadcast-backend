@@ -1,0 +1,178 @@
+# Phase 1: Implement Production OpenE2EE Identity Assertions
+
+## Project context
+
+We are building Hollar/Broadcast, a WhatsApp-like messaging app.
+
+Repositories:
+- Frontend: `broadcast` — Expo React Native.
+- Backend: `broadcast-backend` — Node.js/Fastify, PostgreSQL/Drizzle, Redis.
+
+E2EE SDK:
+- `@open-e2ee/signal-protocol-sdk@13.0.0`
+- Hosted OpenE2EE Relay.
+- Native Sandbox two-client test has passed on iOS.
+- The native SDK uses separate persistent stores and OS-protected key custody.
+- Production chat messaging still uses the existing legacy `encodeText` pipeline. It must remain unchanged in this phase.
+
+I have provisioned production OpenE2EE environment credentials. Inspect the existing configuration and identify which credential types are present. Do not assume that a production publishable key is an identity-signing key.
+
+## Objective
+
+Implement production-grade, server-issued OpenE2EE identity assertions so an authenticated Hollar user can establish a production Relay identity securely.
+
+The backend must be the only component authorized to sign identity assertions. The mobile app must never contain the assertion-signing private key.
+
+Before implementation, inspect the installed SDK version, current backend authentication/session model, database schema, existing E2EE configuration, and official OpenE2EE identity-assertion contract available in the repository or vendor documentation.
+
+Do not invent SDK APIs, JWT claims, Relay endpoints, or undocumented vendor requirements.
+
+## 1. Audit before changing code
+
+Inspect:
+
+- Existing Hollar OTP authentication and JWT verification.
+- How the authenticated user ID is obtained from a validated session.
+- How active sessions and registered devices are represented.
+- Existing environment-variable validation and configuration conventions.
+- Existing Fastify route, schema, error-handling, rate-limiting and test conventions.
+- Current Sandbox identity configuration and frontend session bootstrap.
+- OpenE2EE's documented production identity-assertion requirements for the installed SDK and hosted Relay.
+
+Identify the authoritative immutable Hollar user identifier. Do not use phone numbers, display names, or client-supplied user IDs as the identity subject.
+
+Write down any contract ambiguity before implementing the affected part.
+
+## 2. Implement the production identity endpoint
+
+Create an authenticated backend endpoint, preferably `POST /auth/relay-identity`, following existing route conventions.
+
+The endpoint must:
+
+1. Validate the Hollar access token using the existing authentication middleware.
+2. Resolve the Hollar user ID from the validated server-side authentication context.
+3. Validate the applicable account, session and device status using existing security controls.
+4. Accept only the documented identity-assertion purpose values required by OpenE2EE, such as `register`, `refresh` and `recover`, if those are supported by the verified vendor contract.
+5. Never accept an arbitrary `sub`, Hollar user ID, Relay user ID, role, assurance level or signing key from the client.
+6. Issue a short-lived signed assertion conforming exactly to the vendor contract.
+7. Return only the assertion and documented response fields required by the client.
+8. Apply reasonable request validation and rate limiting.
+9. Avoid logging assertions, access tokens, private keys or other credentials.
+
+Use the vendor-required algorithm, issuer, audience, key ID and claims. The prior design anticipated ES256 and a maximum assertion lifetime of 600 seconds, but verify these requirements against the actual production Relay configuration before implementing them.
+
+Where supported by the verified contract, include:
+- `iss`
+- `aud`
+- `sub` using the immutable Hollar user ID
+- `iat`, `nbf`, `exp`
+- unique `jti`
+- `token_use: "identity"`
+- documented `purpose`
+- `assurance` only when justified by actual authentication evidence
+
+Do not fabricate recent or step-up authentication assurance. Use the vendor's documented normal assurance value when that is all the backend can substantiate.
+
+## 3. Secure key management
+
+Use a server-only signing private key supplied through the backend's approved secret-management mechanism.
+
+Requirements:
+
+- Never place the signing private key in the Expo app, frontend environment, source code, repository, migrations or logs.
+- Never expose it through an `EXPO_PUBLIC_*` variable.
+- Never commit production credentials or add them to example files.
+- Validate key format and required configuration at backend startup.
+- Fail closed if the signing configuration is missing or invalid. Do not silently fall back to Sandbox, an unsigned token or an embedded development secret.
+- Keep the OpenE2EE production publishable key separate from the identity-signing private key.
+- Configure the corresponding public verification JWK and `kid` in the correct OpenE2EE production console/configuration. Do not print private material.
+- Follow existing deployment conventions for secrets. If the project does not yet have a secret manager, document the required environment variables and deployment steps without generating or committing a production private key.
+
+If key rotation is supported, document how a new key and `kid` can be introduced without invalidating still-valid assertions unexpectedly.
+
+## 4. Bind assertions to authenticated users and devices
+
+Verify the vendor contract and current Hollar data model before implementing device binding.
+
+- Use the authenticated Hollar user as the assertion subject.
+- If device or session claims are required, derive them from verified backend records, not arbitrary client input.
+- Ensure a revoked or inactive session cannot mint an assertion.
+- Do not use the OpenE2EE protocol device slot as though it were the Hollar database device UUID.
+- Do not assume a client-generated Relay identity is a trusted identity mapping.
+- Do not add a new device registry or schema migration unless the existing schema genuinely cannot support the required security invariant. If a migration is necessary, explain why and test it.
+
+## 5. Frontend integration: bootstrap only
+
+Inspect the existing `src/lib/e2ee/` session initialization and the SDK's documented production identity integration.
+
+Make only the minimal changes necessary to allow an authenticated native development client to request a production assertion and initialize its production identity flow, provided the SDK supports this exact contract.
+
+Requirements:
+
+- Use the authenticated backend endpoint over HTTPS in production.
+- Never send the Hollar access token directly to the OpenE2EE Relay as a substitute for an identity assertion.
+- Never use Sandbox identity helpers in production.
+- Keep Sandbox behavior isolated to explicit development/test configuration.
+- Do not switch production identity until the required production issuer, audience, signing key and public JWK configuration are verified.
+- Preserve the current native Sandbox test so it remains independently runnable.
+- Do not introduce fallback behavior that silently converts production failures into Sandbox identities.
+- Do not change chat send/receive, message schemas, message APIs or message storage in this phase.
+
+If production Relay identity registration requires an additional documented SDK callback or configuration field, implement only what the verified SDK contract requires.
+
+## 6. Tests
+
+Add focused backend tests using the project's existing test framework.
+
+Cover at least:
+
+- Unauthenticated requests are rejected.
+- A valid authenticated user receives an assertion with the expected issuer, audience, subject and lifetime.
+- The signature verifies against the configured public key.
+- The subject is always taken from the authenticated Hollar user, not request input.
+- Invalid purposes and malformed inputs are rejected.
+- Missing or invalid signing configuration fails closed.
+- Revoked/inactive sessions are rejected where supported by the existing session model.
+- The private key and complete assertion are not leaked in error responses or application logs.
+- Expiry and clock-skew handling match the documented contract.
+
+Add frontend tests for the assertion bootstrap if that behavior is changed.
+
+Do not call the production Relay in automated tests unless a separate, explicitly configured integration test is already supported. Use test-only signing keys and never copy production private material into test fixtures.
+
+## 7. Validation
+
+Run the relevant backend typecheck, lint and focused tests. Run frontend typecheck and relevant E2EE tests if frontend files change.
+
+Inspect the final diff for:
+- Secret exposure.
+- Unverified claims or undocumented SDK methods.
+- Changes to legacy message transport.
+- Unintended changes to authentication behavior.
+- Accidental Sandbox/production configuration mixing.
+
+## Strictly out of scope
+
+Do not:
+- Replace `encodeText` in the chat pipeline.
+- Route product message bodies through the Relay.
+- Send message bodies through both Hollar and the Relay.
+- Change message schemas or migrations without demonstrated necessity.
+- Implement groups, broadcast encryption, media encryption, multi-device support or history recovery.
+- Claim production E2EE is complete merely because an assertion endpoint works.
+
+## Final report
+
+Return:
+
+1. Exact files changed in both repositories.
+2. The verified OpenE2EE assertion contract and source of that contract.
+3. Required environment variable names, without printing their values.
+4. How the public JWK and key ID must be configured in the production Relay console.
+5. Endpoint request/response shape with secrets and real tokens omitted.
+6. Tests run and their actual results.
+7. Any manual configuration still required.
+8. Whether a real production-identity registration test was performed or remains pending.
+9. Confirmation that normal product messaging remains unchanged.
+
+Implement this as a small, reviewable phase. Do not proceed to production message transport integration automatically.

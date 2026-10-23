@@ -1,0 +1,44 @@
+# OpenE2EE Phase 0: Finalize Architecture Decisions
+
+We are implementing E2EE for Broadcast/Hollar on the `opene2ee` branch.
+
+The following decisions are final:
+
+1. Use the OpenE2EE hosted Relay for encrypted message envelopes and protocol-level delivery.
+2. Keep the existing Fastify backend for phone OTP authentication, JWT sessions, chat membership, contacts, and compatible application metadata.
+3. Do not provide chat-history backup or recovery. If a user loses their device-local cryptographic keys or permanently deletes their encryption state, we will not restore historical messages.
+4. The first implementation scope is one-to-one text messaging only.
+5. Keep the existing application database separate from the OpenE2EE protocol database.
+6. Do not implement groups, broadcast-list encryption, media encryption, or linked-device encryption in this phase.
+
+## Tasks
+
+A. Verify the latest published stable OpenE2EE SDK version against the live package registry, its matching Expo documentation, package exports, and TypeScript declarations. The previous audit found conflicting version references. Do not guess the version.
+
+B. Confirm compatibility with Expo SDK 57, React Native 0.86.3, Hermes, SQLCipher, and our native build configuration.
+
+C. Document the production identity assertion flow that maps our authenticated Hollar user and device to OpenE2EE. Identify the required server-side configuration and how secrets are protected.
+
+D. Define message transport responsibilities:
+- OpenE2EE hosted Relay handles encrypted envelopes and protocol-level delivery.
+- Hollar's backend retains compatible chat metadata and application features.
+- Do not send the same encrypted message body through both delivery systems.
+- Define how sender identity, recipient identity, conversation authorization, receipts, and message IDs map between the systems.
+
+E. Define the no-history-recovery policy:
+- No server-side backup of private keys or protocol state.
+- No escrow or account-based recovery of lost encryption keys.
+- Securely persist the local SDK store and its vault key during normal app use.
+- Specify what happens when a user logs out, reinstalls the app, clears a conversation, or loses a device.
+- Do not automatically delete cryptographic keys merely because a conversation is cleared.
+- Do not promise that clearing a conversation removes all server-side ciphertext unless the chosen retention mechanism actually does so.
+
+F. Identify the minimum changes required for the native SDK foundation, followed by a two-device Sandbox proof of concept.
+
+## Restrictions
+
+This is an architecture and compatibility review only. Do not modify files, install dependencies, run migrations, or change application behavior.
+
+Return the verified SDK version, official documentation references, architecture diagram or sequence, unresolved technical risks, and the implementation plan.
+
+Stop and wait for approval before implementation.

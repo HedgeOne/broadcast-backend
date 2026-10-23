@@ -1,0 +1,38 @@
+## Task: Verify OpenE2EE Relay connection on iOS
+
+We have completed the Phase 0 readiness audit. The native iOS development build launches, Signal Protocol initializes, prekeys synchronize, and normal messaging continues to work. The Node Sandbox PoC passes using two independent clients and the hosted Sandbox Relay.
+
+The remaining immediate gap is that the iOS logs show `Starting relay subscription` but do not establish that the Relay connection reaches `connected`.
+
+### Scope
+
+Make the smallest safe, DEV-only diagnostic change in `broadcast/src/lib/e2ee/client.ts`.
+
+1. Inspect the installed `@open-e2ee/signal-protocol-sdk@13.0.0` TypeScript declarations and existing code before changing anything.
+2. After `client.startRelaySubscription()`, subscribe to Relay connection-state changes using the SDK's verified `client.subscribeRelayConnectionState` API.
+3. In development builds only, log the connection state and a non-secret reason, if provided. Use a clear prefix such as `[e2ee] relay`.
+4. After successful session initialization, log the existing `getOpenE2eeStatus()` output if available and whether the opened store reports `protection.atRest === "file-cipher"`, but only if those fields are actually exposed by the installed implementation.
+5. Ensure the diagnostic subscription is cleaned up correctly when the session stops. Follow the exact unsubscribe/disposal contract in the installed SDK types; do not invent one.
+6. Avoid duplicate subscriptions when the session starts more than once.
+
+### Strict constraints
+
+- Do not change the message send/receive pipeline.
+- Do not modify `messages-store`, chat APIs, backend schemas, or migrations.
+- Do not add production identity assertions or change Relay identity configuration.
+- Do not log keys, vault secrets, tokens, message contents, or other sensitive data.
+- Do not claim the Relay is connected unless the actual state reports `connected`.
+- Do not assume that the `file-cipher` status alone proves SQLCipher is correctly linked.
+
+### Validation
+
+Run the relevant typecheck and focused tests.
+
+Then report:
+- Files changed.
+- SDK declaration/type evidence for the connection-state subscription and cleanup.
+- Typecheck/test results.
+- Exact steps to verify the state on the iOS simulator.
+- Any limitations that remain.
+
+Keep the change diagnostic-only and minimal.
